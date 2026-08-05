@@ -534,14 +534,49 @@ class TestRootCliInstallModes(unittest.TestCase):
         fake_c.close.assert_called_once()
 
     def test_preflight_called_before_upload(self):
+        """With bootstrap disabled, missing Python aborts before upload."""
         from paperpointer import cli as ppcli
 
         conn = MagicMock()
         with patch.object(ppcli, "preflight_tablet_python", return_value=2) as pre:
             with patch.object(ppcli, "put_tree") as put:
-                code = ppcli.cmd_install(conn)
+                with patch.object(ppcli, "bootstrap_tablet_python") as boot:
+                    code = ppcli.cmd_install(conn, bootstrap=False)
         self.assertEqual(code, 2)
         pre.assert_called_once_with(conn)
+        boot.assert_not_called()
+        put.assert_not_called()
+
+    def test_bootstrap_runs_when_python_missing(self):
+        """Vanilla tablet: auto-bootstrap then upload when preflight becomes OK."""
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(
+            ppcli, "preflight_tablet_python", side_effect=[2, 0]
+        ) as pre:
+            with patch.object(ppcli, "bootstrap_tablet_python") as boot:
+                with patch.object(ppcli, "put_tree") as put:
+                    with patch.object(ppcli, "run", return_value=("", "", 0)):
+                        code = ppcli.cmd_install(conn, bootstrap=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(pre.call_count, 2)
+        boot.assert_called_once_with(conn)
+        put.assert_called_once()
+
+    def test_bootstrap_failure_does_not_upload(self):
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(ppcli, "preflight_tablet_python", return_value=2):
+            with patch.object(
+                ppcli,
+                "bootstrap_tablet_python",
+                side_effect=RuntimeError("no wifi"),
+            ):
+                with patch.object(ppcli, "put_tree") as put:
+                    code = ppcli.cmd_install(conn, bootstrap=True)
+        self.assertEqual(code, 2)
         put.assert_not_called()
 
 

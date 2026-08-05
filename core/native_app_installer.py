@@ -281,6 +281,31 @@ def _ensure_python3(ssh, say):
         raise RuntimeError("Python 3 install failed")
 
 
+def ensure_tablet_python(ssh, status_cb=None):
+    """Install Entware + Python 3 on the tablet if missing.
+
+    Required by paperpointerd (mouse). Needs free space on /home and tablet
+    internet (Wi‑Fi) for the first bootstrap. Safe to re-run.
+    """
+    def say(msg):
+        if status_cb:
+            status_cb(msg)
+        else:
+            print(msg)
+
+    _preflight_space(ssh)
+    _ensure_entware(ssh, say)
+    _ensure_python3(ssh, say)
+    _ensure_opt_mount(ssh)
+    _, _, code = ssh.exec("test -x /opt/bin/python3", timeout=5)
+    if code != 0:
+        raise RuntimeError(
+            "Tablet Python still missing after bootstrap "
+            "(/opt/bin/python3). Check tablet internet (Wi‑Fi) and free space."
+        )
+    say("Tablet Python ready (/opt/bin/python3)")
+
+
 def _ensure_vellum(ssh, say):
     _, _, code = ssh.exec(
         "command -v vellum || test -x /home/root/.vellum/bin/vellum", timeout=5

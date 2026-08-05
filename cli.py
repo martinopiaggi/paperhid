@@ -115,7 +115,8 @@ def cmd_install(args) -> int:
     if mode in ("pointer", "all"):
         print("=== install pointer (paperpointerd) ===")
         print(
-            "Note: requires tablet /opt/bin/python3 (Entware). Preflight runs before upload."
+            "Note: needs tablet Python. Missing Entware is installed automatically "
+            "(tablet Wi-Fi required for first bootstrap)."
         )
         c = None
         try:
@@ -125,7 +126,8 @@ def cmd_install(args) -> int:
                 saved = True
             from paperpointer.cli import cmd_install as ptr_install
 
-            ptr_code = ptr_install(c)
+            bootstrap = not getattr(args, "no_bootstrap", False)
+            ptr_code = ptr_install(c, bootstrap=bootstrap)
         except Exception as e:
             print(f"pointer install error: {e}", file=sys.stderr)
             ptr_code = 1
@@ -144,6 +146,36 @@ def cmd_install(args) -> int:
     if mode == "pointer":
         return ptr_code
     return kb_code if kb_code != 0 else ptr_code
+
+
+def cmd_bootstrap_python(args) -> int:
+    """Install Entware + Python 3 on a vanilla tablet (pointer prerequisite)."""
+    host = _host_from_args(args)
+    password = _password_from_args(args)
+    c = None
+    try:
+        c, _, _ = open_pointer_paramiko(host=host, password=password)
+        _maybe_save_password(args, host, password)
+        from paperpointer.cli import bootstrap_tablet_python, preflight_tablet_python
+
+        print(
+            "Bootstrapping tablet Python (Entware + python3). "
+            "Tablet needs Wi-Fi; this can take several minutes.",
+            flush=True,
+        )
+        bootstrap_tablet_python(c)
+        code = preflight_tablet_python(c)
+        if code != 0:
+            print("bootstrap finished but python still missing", file=sys.stderr)
+            return code
+        print("OK: tablet Python ready. Next: python cli.py install --pointer")
+        return 0
+    except Exception as e:
+        print(f"bootstrap-python error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        if c is not None:
+            c.close()
 
 
 def cmd_uninstall(args) -> int:
@@ -444,9 +476,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g = inst.add_mutually_exclusive_group(required=True)
     g.add_argument("--keyboard", action="store_true", help="BT keyboard service only")
-    g.add_argument("--pointer", action="store_true", help="paperpointerd only")
-    g.add_argument("--all", action="store_true", help="keyboard then pointer")
+    g.add_argument(
+        "--pointer",
+        action="store_true",
+        help="mouse daemon (auto-installs tablet Python if missing)",
+    )
+    g.add_argument(
+        "--all",
+        action="store_true",
+        help="keyboard then pointer (recommended first install)",
+    )
     inst.add_argument("--wait", type=int, default=12, help="BT controller wait (keyboard)")
+    inst.add_argument(
+        "--no-bootstrap",
+        action="store_true",
+        help="Do not auto-install Entware/Python if missing (pointer)",
+    )
 
     un = sub.add_parser("uninstall", help="Uninstall keyboard, pointer, or both")
     ug = un.add_mutually_exclusive_group(required=True)
@@ -462,6 +507,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="BT controller wait seconds",
     )
     sub.add_parser("uninstall-service", help="Alias: uninstall --keyboard")
+    sub.add_parser(
+        "bootstrap-python",
+        help="Install Entware + Python 3 on tablet (mouse prerequisite)",
+    )
     sp = sub.add_parser("ssh")
     sp.add_argument("remote_cmd", nargs="?", default="uname -a")
     sp = sub.add_parser("scan")
@@ -504,11 +553,20 @@ def main(argv=None) -> int:
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "install-service": lambda a: cmd_install(
-            argparse.Namespace(**{**vars(a), "keyboard": True, "pointer": False, "all": False})
+            argparse.Namespace(
+                **{
+                    **vars(a),
+                    "keyboard": True,
+                    "pointer": False,
+                    "all": False,
+                    "no_bootstrap": True,
+                }
+            )
         ),
         "uninstall-service": lambda a: cmd_uninstall(
             argparse.Namespace(**{**vars(a), "keyboard": True, "pointer": False, "all": False})
         ),
+        "bootstrap-python": cmd_bootstrap_python,
         "ssh": lambda a: kb.cmd_ssh(_kb_args_view(a)),
         "scan": lambda a: kb.cmd_scan(_kb_args_view(a)),
         "pair": lambda a: kb.cmd_pair(_kb_args_view(a)),

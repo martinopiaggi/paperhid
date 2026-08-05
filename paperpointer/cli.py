@@ -241,10 +241,8 @@ if [ -x /opt/bin/python3 ]; then
 fi
 echo "ERROR: tablet Python missing — need /opt/bin/python3 (Entware)."
 echo "Pointer install will not upload until this is fixed."
-echo "Supported paths:"
-echo "  1) Install Entware for Paper Pro (rmpp-entware), then: opkg install python3"
-echo "  2) PaperHid native-app path (installs Entware+Python as a side effect)"
-echo "  3) See README"
+echo "Fix: re-run install (auto-bootstrap) with tablet Wi-Fi on, or:"
+echo "  python cli.py bootstrap-python"
 exit 2
 """
     out, err, code = run(c, script, timeout=30)
@@ -254,12 +252,48 @@ exit 2
     return code
 
 
-def cmd_install(c) -> int:
+class _ParamikoExec:
+    """Adapt a raw Paramiko client to the ``.exec(cmd, timeout=)`` API."""
+
+    def __init__(self, c):
+        self._c = c
+
+    def exec(self, cmd, timeout=30):
+        return run(self._c, cmd, timeout=timeout)
+
+
+def bootstrap_tablet_python(c, status_cb=None) -> None:
+    """Install Entware + Python 3 over an open Paramiko session."""
+    from core.native_app_installer import ensure_tablet_python
+
+    ensure_tablet_python(_ParamikoExec(c), status_cb=status_cb)
+
+
+def cmd_install(c, *, bootstrap: bool = True) -> int:
     if not DEVICE_DIR.is_dir():
         print("missing device/", file=sys.stderr)
         return 1
-    # Preflight before any upload so a fresh tablet fails cleanly.
+    # Preflight before any upload. On vanilla tablets, bootstrap Entware+Python.
     pre = preflight_tablet_python(c)
+    if pre != 0 and bootstrap:
+        print(
+            "Tablet Python missing — bootstrapping Entware + python3 "
+            "(tablet needs Wi-Fi / internet; ~2-5 min)...",
+            flush=True,
+        )
+        try:
+            bootstrap_tablet_python(c)
+        except Exception as e:
+            print(f"bootstrap failed: {e}", file=sys.stderr)
+            print(
+                "install aborted: could not install tablet Python (no upload).\n"
+                "Turn on tablet Wi-Fi, free ~80 MB on /home, then:\n"
+                "  python cli.py bootstrap-python\n"
+                "  python cli.py install --pointer",
+                file=sys.stderr,
+            )
+            return 2
+        pre = preflight_tablet_python(c)
     if pre != 0:
         print(
             "install aborted: tablet Python prerequisite not met (no upload).",
@@ -279,7 +313,7 @@ if [ ! -x /opt/bin/python3 ] && [ -x /home/root/.entware/bin/python3 ]; then
   mountpoint -q /opt || mount --bind /home/root/.entware /opt
 fi
 if [ ! -x /opt/bin/python3 ]; then
-  echo "ERROR: need /opt/bin/python3 (Entware). Install via PaperHid native path or rmpp-entware."
+  echo "ERROR: need /opt/bin/python3 (Entware). Run: python cli.py bootstrap-python"
   exit 2
 fi
 cp {REMOTE_HOME}/{UNIT_NAME} {UNIT_ETC}
