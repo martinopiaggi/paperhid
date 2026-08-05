@@ -186,6 +186,11 @@ def ensure_adapter_ready(t: Transport, timeout=30, gate_wifi=False):
 def verify_device_state(t: Transport, cfg):
     state = {
         "service_installed": False,
+        # Distinct facts for status health (PaperHid):
+        # service_present = unit/script files exist; service_active = is-active.
+        "service_present": False,
+        "service_active": False,
+        "service_failed": False,
         "keyboard_paired": False,
         "keyboard_connected": False,
         "bt_powered": False,
@@ -197,15 +202,34 @@ def verify_device_state(t: Transport, cfg):
         "radio_scan_ok": None,
     }
     try:
-        _, _, code = t.run(f"systemctl is-active {SERVICE_NAME}", timeout=5)
-        if code != 0:
-            _, _, code = t.run(
-                f"test -f {SCRIPT_REMOTE_PATH} -o -f {SERVICE_PERSISTENT_PATH}",
-                timeout=5,
-            )
-        state["service_installed"] = code == 0
+        out, _, code = t.run(f"systemctl is-active {SERVICE_NAME} 2>/dev/null", timeout=5)
+        active_token = (out or "").strip().splitlines()
+        active_token = active_token[0].strip().lower() if active_token else ""
+        state["service_active"] = code == 0 and active_token == "active"
     except Exception:
         pass
+    try:
+        out, _, _ = t.run(
+            f"systemctl is-failed {SERVICE_NAME} 2>/dev/null || echo unknown",
+            timeout=5,
+        )
+        failed_token = (out or "").strip().splitlines()
+        failed_token = failed_token[0].strip().lower() if failed_token else ""
+        state["service_failed"] = failed_token == "failed"
+    except Exception:
+        pass
+    try:
+        # Home script, /usr unit, and volatile /etc unit all count as present.
+        _, _, code = t.run(
+            f"test -f {SCRIPT_REMOTE_PATH} -o -f {SERVICE_PERSISTENT_PATH} "
+            f"-o -f {SERVICE_VOLATILE_PATH}",
+            timeout=5,
+        )
+        state["service_present"] = code == 0 or state["service_active"]
+    except Exception:
+        state["service_present"] = state["service_active"]
+    # Back-compat for GUI / older callers: "installed" means files or active.
+    state["service_installed"] = state["service_present"] or state["service_active"]
 
     try:
         out, _, _ = t.run("bluetoothctl show", timeout=5)

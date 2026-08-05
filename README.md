@@ -136,9 +136,16 @@ python -m paperpointer status
 
 ### Merged `status`
 
-Prints `=== keyboard ===` and `=== pointer ===`.  
-**Pointer not installed** is normal for keyboard-only and exits **0**.  
-Nonzero only when something that *is* installed is unhealthy or a probe fails.
+Prints `=== keyboard ===` and `=== pointer ===` with a shared state model:
+
+| State | Meaning | Exit |
+|-------|---------|------|
+| `not_installed` | Component absent (optional) | 0 |
+| `staged` | Residual home files only (e.g. after pointer uninstall keeps `~/.paperpointer`) | 0 |
+| `active` | Unit present and running | 0 |
+| `inactive` / `failed` | Unit present but not healthy | **1** |
+
+Nonzero only when a **registered** unit is unhealthy or a probe fails — not merely because an optional component is missing.
 
 ### Pointer commands (compat + `cli.py pointer …`)
 
@@ -186,10 +193,14 @@ SSH policy for combined commands: **sequential** connections — keyboard ops vi
 # Offline (no tablet)
 python -m unittest discover -s tests -v
 
-# Live Paper Pro (opt-in)
-set PAPERWRITER_LIVE=1
-set PAPERWRITER_PASSWORD=...
+# Live Paper Pro (opt-in) — PowerShell
+$env:PAPERWRITER_LIVE = "1"
+$env:PAPERWRITER_PASSWORD = "..."
 python -m unittest tests.test_live_paper_pro -v
+
+# cmd.exe (if you prefer)
+# set PAPERWRITER_LIVE=1
+# set PAPERWRITER_PASSWORD=...
 ```
 
 Live-device smoke for `install --all`, reconnect, rollback, and the firmware-locked cursor is a **release** gate, not required for offline merge.

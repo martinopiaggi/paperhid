@@ -254,7 +254,7 @@ class TestPointerProbeParse(unittest.TestCase):
         import cli as root_cli
 
         facts = root_cli.parse_pointer_probe_output(
-            "HOME_NO\nUNIT_NO\nACTIVE:inactive\nFAILED:active\n"
+            "HOME_NO\nUNIT_ETC_NO\nUNIT_USR_NO\nACTIVE:inactive\nFAILED:active\n"
         )
         from core.status_merge import classify_pointer_status, merge_exit_codes
 
@@ -267,38 +267,54 @@ class TestPointerProbeParse(unittest.TestCase):
         self.assertTrue(ptr.is_absent)
         self.assertEqual(merge_exit_codes(0, ptr), 0)
 
-    def test_cmd_status_inactive_exits_nonzero(self):
-        """Mocked open_pointer_paramiko+run with real multi-line probe stdout.
+    def test_home_only_staged_exit_zero(self):
+        """After uninstall --pointer, home remains; no unit → staged, exit 0."""
+        import cli as root_cli
+        from core.status_merge import classify_pointer_status, merge_exit_codes
 
-        Keyboard path succeeds so exit code comes only from pointer classification.
-        """
+        facts = root_cli.parse_pointer_probe_output(
+            "HOME_YES\nUNIT_ETC_NO\nUNIT_USR_NO\nACTIVE:inactive\nFAILED:active\n"
+        )
+        self.assertTrue(facts["home_present"])
+        self.assertFalse(facts["unit_file_present"])
+        ptr = classify_pointer_status(
+            home_present=facts["home_present"],
+            unit_file_present=facts["unit_file_present"],
+            is_active=facts["is_active"],
+            is_failed=facts["is_failed"],
+        )
+        self.assertEqual(ptr.state, "staged")
+        self.assertEqual(merge_exit_codes(0, ptr), 0)
+
+    def test_unit_usr_path_counts_as_present(self):
+        import cli as root_cli
+
+        facts = root_cli.parse_pointer_probe_output(
+            "HOME_YES\nUNIT_ETC_NO\nUNIT_USR_YES\nACTIVE:active\nFAILED:active\n"
+        )
+        self.assertTrue(facts["unit_file_present"])
+        self.assertTrue(facts["unit_usr_present"])
+        self.assertFalse(facts["unit_etc_present"])
+
+    def _run_cmd_status(self, probe_stdout, kb_state, save_password=False):
         import argparse
         import cli as root_cli
 
-        probe_stdout = (
-            "HOME_YES\n"
-            "UNIT_YES\n"
-            "ACTIVE:inactive\n"
-            "FAILED:active\n"
-        )
         fake_c = MagicMock()
         fake_ssh = MagicMock()
         args = argparse.Namespace(
             host="10.11.99.1",
             ip=None,
             password="x",
-            save_password=False,
+            save_password=save_password,
             timeout=15,
         )
 
         def fake_run(c, cmd, timeout=20):
-            # Must be the labeled probe script path used by cmd_status
             self.assertIn("ACTIVE:", cmd)
             self.assertIn("FAILED:", cmd)
-            self.assertNotRegex(
-                cmd,
-                r"is-active.*\|\| echo inactive;.*is-failed",
-            )
+            self.assertIn("UNIT_ETC", cmd)
+            self.assertIn("UNIT_USR", cmd)
             return probe_stdout, "", 0
 
         with patch.object(root_cli, "_password_from_args", return_value="x"):
@@ -320,7 +336,7 @@ class TestPointerProbeParse(unittest.TestCase):
                         with patch.object(
                             root_cli.bluetooth,
                             "verify_device_state",
-                            return_value={"service_installed": True},
+                            return_value=kb_state,
                         ):
                             with patch.object(
                                 root_cli,
@@ -332,10 +348,71 @@ class TestPointerProbeParse(unittest.TestCase):
                                     side_effect=fake_run,
                                 ):
                                     code = root_cli.cmd_status(args)
-        # Keyboard healthy (0); inactive installed pointer must force nonzero.
+        return code, fake_c, fake_ssh
+
+    def test_cmd_status_inactive_exits_nonzero(self):
+        """Mocked open_pointer_paramiko+run with real multi-line probe stdout.
+
+        Keyboard path succeeds so exit code comes only from pointer classification.
+        """
+        probe_stdout = (
+            "HOME_YES\n"
+            "UNIT_ETC_YES\n"
+            "UNIT_USR_NO\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"
+        )
+        code, fake_c, fake_ssh = self._run_cmd_status(
+            probe_stdout,
+            {
+                "service_installed": True,
+                "service_present": True,
+                "service_active": True,
+                "service_failed": False,
+            },
+        )
         self.assertEqual(code, 1)
         fake_c.close.assert_called_once()
         fake_ssh.disconnect.assert_called_once()
+
+    def test_cmd_status_home_only_after_uninstall_exits_zero(self):
+        probe_stdout = (
+            "HOME_YES\n"
+            "UNIT_ETC_NO\n"
+            "UNIT_USR_NO\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"
+        )
+        code, _, _ = self._run_cmd_status(
+            probe_stdout,
+            {
+                "service_present": True,
+                "service_active": True,
+                "service_failed": False,
+                "service_installed": True,
+            },
+        )
+        self.assertEqual(code, 0)
+
+    def test_cmd_status_keyboard_inactive_exits_nonzero(self):
+        """Installed but stopped keyboard service must fail merged status."""
+        probe_stdout = (
+            "HOME_NO\n"
+            "UNIT_ETC_NO\n"
+            "UNIT_USR_NO\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"
+        )
+        code, _, _ = self._run_cmd_status(
+            probe_stdout,
+            {
+                "service_present": True,
+                "service_active": False,
+                "service_failed": False,
+                "service_installed": True,
+            },
+        )
+        self.assertEqual(code, 1)
 
 
 class TestRootCliInstallModes(unittest.TestCase):
@@ -358,6 +435,48 @@ class TestRootCliInstallModes(unittest.TestCase):
         self.assertTrue(c.all)
         with self.assertRaises(SystemExit):
             p.parse_args(["install", "--keyboard", "--pointer"])
+
+    def test_install_service_alias_accepts_wait(self):
+        """Compat: python cli.py install-service --wait N (PaperWriter CLI)."""
+        import cli as root_cli
+
+        p = root_cli.build_parser()
+        args = p.parse_args(["install-service", "--wait", "30"])
+        self.assertEqual(args.command, "install-service")
+        self.assertEqual(args.wait, 30)
+
+    def test_failed_auth_never_saves_password(self):
+        """--save-password must not write config when connect fails."""
+        import argparse
+        import cli as root_cli
+
+        args = argparse.Namespace(
+            keyboard=False,
+            pointer=True,
+            all=False,
+            host=None,
+            ip="10.11.99.1",
+            password="wrong",
+            save_password=True,
+            timeout=15,
+            wait=12,
+        )
+        with patch.object(root_cli, "_password_from_args", return_value="wrong"):
+            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
+                with patch.object(
+                    root_cli,
+                    "open_pointer_paramiko",
+                    side_effect=RuntimeError("auth failed"),
+                ):
+                    with patch.object(root_cli.config, "save") as save:
+                        with patch.object(root_cli, "_maybe_save_password") as maybe:
+                            # Drive real cmd_install path: connect fails before save
+                            code = root_cli.cmd_install(args)
+        self.assertEqual(code, 1)
+        # Connection failed: save helper must not have been called with success path.
+        # cmd_install only calls _maybe_save_password after open succeeds.
+        maybe.assert_not_called()
+        save.assert_not_called()
 
     def test_install_all_skips_pointer_on_keyboard_fail(self):
         import cli as root_cli

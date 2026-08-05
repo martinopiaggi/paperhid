@@ -15,6 +15,23 @@ PaperHid is the monorepo union of two source repositories, imported from
 - Monorepo glue (root `cli.py`, `core/credentials.py`, `core/connection.py`,
   `core/status_merge.py`, this file, root README) is **new** in PaperHid.
 
+## Post-import modifications
+
+These files are **intentionally modified** relative to the pinned archives (not
+verbatim copies). Treat the pin as provenance for the bulk of device/shared
+logic; monorepo integration lives in the deltas below.
+
+| Path | Pin origin | Why changed in PaperHid |
+|------|------------|-------------------------|
+| `keyboard_cli.py` | PaperWriter `cli.py` | Password resolution via `core.credentials` (CLI-first precedence) |
+| `paperpointer/cli.py` | PaperPointer package | Preflight before pointer upload; `register_pointer_commands` / `dispatch_pointer` API; shared-flag `SUPPRESS` for before/after subcommand flags |
+| `paperpointer/sshutil.py` | PaperPointer package | Password via monorepo precedence (`require_password`) |
+| `paperpointer/__main__.py` | PaperPointer package | Guard `main()` with `if __name__ == "__main__"` |
+| `paperpointer/__init__.py` | PaperPointer package | Version bump for monorepo package |
+| `shared/bluetooth.py` | PaperWriter | `service_present` / `service_active` / `service_failed` for status health |
+| `core/*` new modules | — | credentials, connection policy, status_merge |
+| Root `cli.py`, `README.md`, tests | — | Unified install/status, merge tests |
+
 ## Relationship to the three repositories
 
 | Repository | Visibility (at PaperHid creation) | Role |
