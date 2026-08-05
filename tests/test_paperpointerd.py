@@ -215,6 +215,102 @@ class TestDefaultConf(unittest.TestCase):
                 pp.CURSOR_STYLE_PATH = old_path
 
 
+class TestKeyboardPresenceDetection(unittest.TestCase):
+    """BT keyboard should suppress OSK via rM_Keyboard presence logic."""
+
+    SAMPLE = """
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="30370000.snvs:snvs-powerkey"
+H: Handlers=kbd event0
+B: EV=3
+B: KEY=10000000000000 0
+
+I: Bus=0005 Vendor=36f7 Product=5755 Version=0001
+N: Name="CLVX S | Channel 2 Keyboard"
+H: Handlers=kbd leds event5
+B: EV=12001f
+B: KEY=3bfff 0 0 483ffff17aff32d bfd4444600000000 1 130ff38b17c007 ffff7bfad9415fff ffbeffdfffefffff fffffffffffffffe
+
+I: Bus=0005 Vendor=36f7 Product=5755 Version=0001
+N: Name="CLVX S | Channel 2 Wireless Radio Control"
+H: Handlers=kbd event6 rfkill
+B: EV=13
+B: KEY=80000000000000 0 0 0
+
+I: Bus=0006 Vendor=0001 Product=0001 Version=0001
+N: Name="paperpointer-touch"
+H: Handlers=event4
+B: EV=b
+B: KEY=420 0 0 0 0 0
+
+I: Bus=0006 Vendor=0001 Product=0001 Version=0001
+N: Name="rM_Keyboard"
+H: Handlers=kbd event9
+B: EV=3
+B: KEY=ffffffffffff
+"""
+
+    def test_parses_blocks(self):
+        devs = pp.parse_input_device_blocks(self.SAMPLE)
+        names = [d["name"] for d in devs]
+        self.assertIn("CLVX S | Channel 2 Keyboard", names)
+        self.assertIn("paperpointer-touch", names)
+
+    def test_clvx_keyboard_counts_as_external(self):
+        self.assertTrue(
+            pp.external_keyboard_present(self.SAMPLE),
+            "CLVX Keyboard HID must count as external keyboard",
+        )
+
+    def test_presence_and_touch_do_not_count(self):
+        only_self = """
+I: Bus=0006 Vendor=0001 Product=0001 Version=0001
+N: Name="rM_Keyboard"
+H: Handlers=kbd event9
+B: EV=3
+B: KEY=ffffffffffff
+
+I: Bus=0006 Vendor=0001 Product=0001 Version=0001
+N: Name="paperpointer-touch"
+H: Handlers=event4
+B: EV=b
+B: KEY=420 0 0 0 0 0
+"""
+        self.assertFalse(pp.external_keyboard_present(only_self))
+
+    def test_powerkey_and_radio_do_not_count(self):
+        stock = """
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="30370000.snvs:snvs-powerkey"
+H: Handlers=kbd event0
+B: EV=3
+B: KEY=10000000000000 0
+
+I: Bus=0005 Vendor=36f7 Product=5755 Version=0001
+N: Name="CLVX S | Channel 2 Wireless Radio Control"
+H: Handlers=kbd event6 rfkill
+B: EV=13
+B: KEY=80000000000000 0 0 0
+"""
+        self.assertFalse(pp.external_keyboard_present(stock))
+
+    def test_is_external_helpers(self):
+        self.assertTrue(
+            pp.is_external_keyboard_device(
+                {
+                    "name": "CLVX S | Channel 2 Keyboard",
+                    "handlers": "kbd leds event5",
+                    "key": "3bfff 0 0",
+                }
+            )
+        )
+        self.assertFalse(
+            pp.is_external_keyboard_device(
+                {"name": "rM_Keyboard", "handlers": "kbd event9", "key": "ffff"}
+            )
+        )
+
+
 class TestClampMove(unittest.TestCase):
     def setUp(self):
         self.cfg = pp.default_conf()

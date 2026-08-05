@@ -117,6 +117,14 @@ IGNORE_NAME_SUBSTR = (
     "paperpointer",
 )
 
+# xochitl KeyboardInfo looks for Type Folio-style keyboards (name rM_Keyboard
+# and/or ID_INPUT_KEYBOARD). Bluetooth HID keyboards type fine via
+# EpaperEvdevKeyboard but do not always set keyboardConnected, so a touch
+# or synthetic mouse click still pops the on-screen virtual keyboard.
+RM_KEYBOARD_NAME = b"rM_Keyboard"
+# Keys that make udev classify the node as ID_INPUT_KEYBOARD (A-Z + Enter).
+_PRESENCE_KEY_CODES = tuple(range(1, 58))  # ESC..KEY_SPACE range on Linux
+
 # Cursor defaults off until the QML overlay passes its version/health checks.
 DEFAULT_CONF: dict = {
     "accel": 2.0,
@@ -744,6 +752,145 @@ def _uinput_create(fd: int, name: bytes, absmax: list[int]) -> None:
     time.sleep(0.15)
 
 
+def parse_input_device_blocks(blob: str) -> list[dict]:
+    """Parse ``/proc/bus/input/devices`` into name/handlers/bit maps."""
+    devices: list[dict] = []
+    cur: dict | None = None
+    for raw in (blob or "").splitlines():
+        line = raw.rstrip()
+        if not line:
+            if cur:
+                devices.append(cur)
+                cur = None
+            continue
+        if line.startswith("I:"):
+            if cur:
+                devices.append(cur)
+            cur = {"name": "", "handlers": "", "ev": "", "key": ""}
+            continue
+        if cur is None:
+            continue
+        if line.startswith("N: Name="):
+            cur["name"] = line.split("=", 1)[1].strip().strip('"')
+        elif line.startswith("H: Handlers="):
+            cur["handlers"] = line.split("=", 1)[1].strip()
+        elif line.startswith("B: EV="):
+            cur["ev"] = line.split("=", 1)[1].strip()
+        elif line.startswith("B: KEY="):
+            cur["key"] = line.split("=", 1)[1].strip()
+    if cur:
+        devices.append(cur)
+    return devices
+
+
+def is_external_keyboard_device(dev: dict) -> bool:
+    """True for a real Bluetooth/USB keyboard HID, not stock tablet keys."""
+    name = (dev.get("name") or "").strip()
+    low = name.lower()
+    if not name:
+        return False
+    # Never count our own presence node or the synthetic touch device.
+    if low in ("rm_keyboard", "paperpointer-touch") or low.startswith("paperpointer"):
+        return False
+    for needle in IGNORE_NAME_SUBSTR:
+        if needle in low:
+            return False
+    # Wireless radio / consumer-control companions of composite HIDs.
+    if "wireless radio" in low or "consumer control" in low:
+        return False
+    handlers = (dev.get("handlers") or "").lower()
+    # Prefer explicit keyboard naming; also accept kbd handler + KEY bitmap.
+    if "keyboard" in low:
+        return True
+    if "kbd" in handlers.split() and (dev.get("key") or "").strip():
+        # Require more than a couple of special keys (powerkey is excluded above).
+        key_words = (dev.get("key") or "").split()
+        return len(key_words) >= 2
+    return False
+
+
+def external_keyboard_present(devices_blob: str | None = None) -> bool:
+    """Whether a non-synthetic external keyboard is currently attached.
+
+    Used to decide if xochitl should treat the session as keyboard-connected
+    (suppress the virtual keyboard on touch / mouse focus).
+    """
+    if devices_blob is None:
+        try:
+            with open("/proc/bus/input/devices", encoding="utf-8", errors="replace") as f:
+                devices_blob = f.read()
+        except OSError:
+            return False
+    return any(is_external_keyboard_device(d) for d in parse_input_device_blocks(devices_blob))
+
+
+class KeyboardPresence:
+    """Hold a Type-Folio-named uinput keyboard while a BT keyboard is present.
+
+    xochitl's ``KeyboardInfo`` / virtual-keyboard module suppresses the
+    on-screen keyboard when it believes a hardware keyboard is connected
+    (Type Folio appears as ``rM_Keyboard``). Bluetooth keyboards often type
+    correctly without flipping that flag, so mouse-click focus still opens
+    the OSK. While any external keyboard HID is present, we expose a silent
+    ``rM_Keyboard`` uinput node so the OSK stays down.
+    """
+
+    def __init__(self) -> None:
+        self.fd = -1
+        self._active = False
+
+    @property
+    def active(self) -> bool:
+        return self._active and self.fd >= 0
+
+    def sync(self, want: bool | None = None) -> None:
+        if want is None:
+            want = external_keyboard_present()
+        if want and not self.active:
+            self._create()
+        elif not want and self.active:
+            self.close()
+
+    def _create(self) -> None:
+        if fcntl is None:
+            return
+        try:
+            fd = _uinput_open()
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+            fcntl.ioctl(fd, UI_SET_EVBIT, EV_SYN)
+            for code in _PRESENCE_KEY_CODES:
+                try:
+                    fcntl.ioctl(fd, UI_SET_KEYBIT, code)
+                except OSError:
+                    pass
+            # No absolute axes — pure keyboard.
+            absmax = [0] * 0x40
+            _uinput_create(fd, RM_KEYBOARD_NAME, absmax)
+            self.fd = fd
+            self._active = True
+            log("keyboard presence: rM_Keyboard uinput up (suppress OSK)")
+        except Exception as e:
+            log(f"keyboard presence create failed: {e!r}")
+            self.close()
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            try:
+                if fcntl is not None:
+                    fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+            except OSError:
+                pass
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        was = self._active
+        self.fd = -1
+        self._active = False
+        if was:
+            log("keyboard presence: rM_Keyboard uinput down")
+
+
 def _ev(fd: int, etype: int, code: int, value: int) -> None:
     os.write(fd, struct.pack(EVENT_FMT, 0, 0, etype, code, int(value)))
 
@@ -1321,6 +1468,10 @@ def open_sources(cfg: dict) -> list[dict]:
 
 def run_loop(cfg: dict) -> None:
     touch = TouchClick(int(cfg["touch_x_max"]), int(cfg["touch_y_max"]))
+    kb_presence = KeyboardPresence()
+    # Suppress virtual keyboard while a BT keyboard is connected (mouse/touch focus).
+    kb_presence.sync()
+    last_kb_presence_check = time.monotonic()
     cur = None
     if cfg.get("cursor"):
         style = write_cursor_style_file(str(cfg.get("cursor_style", CURSOR_STYLE_DEFAULT)))
@@ -1571,8 +1722,12 @@ def run_loop(cfg: dict) -> None:
             if not sources:
                 if cur:
                     pub(visible=False)
+                # Still track BT keyboard while waiting for a pointer node.
+                kb_presence.sync()
                 time.sleep(1.0)
                 continue
+            # Re-evaluate on every (re)open of pointer sources (connect/wake).
+            kb_presence.sync()
             # Show on connect. With cursor_hide_ms=0 the crosshair stays for the
             # whole time a pointer node is open, including idle; a positive value
             # auto-hides after that many idle milliseconds.
@@ -1603,6 +1758,11 @@ def run_loop(cfg: dict) -> None:
                         }:
                             log("source set changed")
                             break
+                        # Re-check BT keyboard attachment a few times a second.
+                        now = time.monotonic()
+                        if now - last_kb_presence_check >= 0.5:
+                            last_kb_presence_check = now
+                            kb_presence.sync()
                         if (
                             hide_ms > 0
                             and cursor_visible
@@ -1670,6 +1830,7 @@ def run_loop(cfg: dict) -> None:
         orient.close()
         if cur:
             cur.close()
+        kb_presence.close()
         touch.close()
 
 
