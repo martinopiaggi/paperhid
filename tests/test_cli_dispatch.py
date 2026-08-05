@@ -192,6 +192,152 @@ class TestBothModuleEntryPoints(unittest.TestCase):
             self.assertIn(name, choices)
 
 
+class TestPointerProbeParse(unittest.TestCase):
+    """Drive shipped parse_pointer_probe_output + cmd_status path."""
+
+    def test_inactive_not_confused_with_is_failed_active(self):
+        """systemctl is-failed prints 'active' when unit is not-failed (incl. inactive)."""
+        import cli as root_cli
+
+        # Real multi-command shape after the labeled-marker fix, plus the
+        # dangerous legacy bare-token mix that used to flip inactive→active.
+        labeled = (
+            "HOME_YES\n"
+            "UNIT_YES\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"  # is-failed "active" == not failed
+        )
+        facts = root_cli.parse_pointer_probe_output(labeled)
+        self.assertTrue(facts["home_present"])
+        self.assertTrue(facts["unit_file_present"])
+        self.assertIs(facts["is_active"], False)
+        self.assertFalse(facts["is_failed"])
+
+        from core.status_merge import classify_pointer_status, merge_exit_codes
+
+        ptr = classify_pointer_status(
+            home_present=facts["home_present"],
+            unit_file_present=facts["unit_file_present"],
+            is_active=facts["is_active"],
+            is_failed=facts["is_failed"],
+        )
+        self.assertEqual(ptr.state, "inactive")
+        self.assertEqual(merge_exit_codes(0, ptr), 1)
+
+    def test_active_running_healthy(self):
+        import cli as root_cli
+
+        facts = root_cli.parse_pointer_probe_output(
+            "HOME_YES\nUNIT_YES\nACTIVE:active\nFAILED:active\n"
+        )
+        self.assertIs(facts["is_active"], True)
+        self.assertFalse(facts["is_failed"])
+        from core.status_merge import classify_pointer_status
+
+        ptr = classify_pointer_status(**{
+            k: facts[k]
+            for k in ("home_present", "unit_file_present", "is_active", "is_failed")
+        })
+        self.assertEqual(ptr.state, "active")
+        self.assertEqual(ptr.exit_code, 0)
+
+    def test_failed_unit(self):
+        import cli as root_cli
+
+        facts = root_cli.parse_pointer_probe_output(
+            "HOME_YES\nUNIT_YES\nACTIVE:failed\nFAILED:failed\n"
+        )
+        self.assertIs(facts["is_active"], False)
+        self.assertTrue(facts["is_failed"])
+
+    def test_not_installed(self):
+        import cli as root_cli
+
+        facts = root_cli.parse_pointer_probe_output(
+            "HOME_NO\nUNIT_NO\nACTIVE:inactive\nFAILED:active\n"
+        )
+        from core.status_merge import classify_pointer_status, merge_exit_codes
+
+        ptr = classify_pointer_status(
+            home_present=facts["home_present"],
+            unit_file_present=facts["unit_file_present"],
+            is_active=facts["is_active"],
+            is_failed=facts["is_failed"],
+        )
+        self.assertTrue(ptr.is_absent)
+        self.assertEqual(merge_exit_codes(0, ptr), 0)
+
+    def test_cmd_status_inactive_exits_nonzero(self):
+        """Mocked open_pointer_paramiko+run with real multi-line probe stdout.
+
+        Keyboard path succeeds so exit code comes only from pointer classification.
+        """
+        import argparse
+        import cli as root_cli
+
+        probe_stdout = (
+            "HOME_YES\n"
+            "UNIT_YES\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"
+        )
+        fake_c = MagicMock()
+        fake_ssh = MagicMock()
+        args = argparse.Namespace(
+            host="10.11.99.1",
+            ip=None,
+            password="x",
+            save_password=False,
+            timeout=15,
+        )
+
+        def fake_run(c, cmd, timeout=20):
+            # Must be the labeled probe script path used by cmd_status
+            self.assertIn("ACTIVE:", cmd)
+            self.assertIn("FAILED:", cmd)
+            self.assertNotRegex(
+                cmd,
+                r"is-active.*\|\| echo inactive;.*is-failed",
+            )
+            return probe_stdout, "", 0
+
+        with patch.object(root_cli, "_password_from_args", return_value="x"):
+            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
+                with patch.object(
+                    root_cli,
+                    "open_keyboard_ssh",
+                    return_value=(fake_ssh, "h", "p"),
+                ):
+                    with patch.object(
+                        root_cli.device_mod,
+                        "detect",
+                        return_value={
+                            "label": "Paper Pro",
+                            "model": "paper_pro",
+                            "img_version": "3.28.0.164",
+                        },
+                    ):
+                        with patch.object(
+                            root_cli.bluetooth,
+                            "verify_device_state",
+                            return_value={"service_installed": True},
+                        ):
+                            with patch.object(
+                                root_cli,
+                                "open_pointer_paramiko",
+                                return_value=(fake_c, "h", "p"),
+                            ):
+                                with patch(
+                                    "paperpointer.sshutil.run",
+                                    side_effect=fake_run,
+                                ):
+                                    code = root_cli.cmd_status(args)
+        # Keyboard healthy (0); inactive installed pointer must force nonzero.
+        self.assertEqual(code, 1)
+        fake_c.close.assert_called_once()
+        fake_ssh.disconnect.assert_called_once()
+
+
 class TestRootCliInstallModes(unittest.TestCase):
     def test_install_requires_mode(self):
         import cli as root_cli

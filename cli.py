@@ -179,6 +179,55 @@ def _install_mode(args) -> str:
     raise CliError("install/uninstall requires one of --keyboard, --pointer, --all")
 
 
+def parse_pointer_probe_output(out: str) -> dict:
+    """Parse labeled pointer probe stdout from the tablet.
+
+    Remote script emits dedicated markers so ``systemctl is-failed`` printing
+    ``active`` (meaning *not failed*) cannot be mistaken for a running unit::
+
+        HOME_YES|HOME_NO
+        UNIT_YES|UNIT_NO
+        ACTIVE:<state>     # from systemctl is-active only
+        FAILED:<state>     # from systemctl is-failed only
+    """
+    home_present = False
+    unit_file_present = False
+    is_active = None  # type: bool | None
+    is_failed = False
+    for raw in (out or "").splitlines():
+        ln = raw.strip()
+        if not ln:
+            continue
+        if ln == "HOME_YES":
+            home_present = True
+        elif ln == "HOME_NO":
+            home_present = False
+        elif ln == "UNIT_YES":
+            unit_file_present = True
+        elif ln == "UNIT_NO":
+            unit_file_present = False
+        elif ln.startswith("ACTIVE:"):
+            state = ln.split(":", 1)[1].strip().lower()
+            if state == "active":
+                is_active = True
+            elif state in ("inactive", "failed", "activating", "deactivating", "unknown"):
+                is_active = False
+            else:
+                # dead, not-found, etc. → not running
+                is_active = False
+        elif ln.startswith("FAILED:"):
+            state = ln.split(":", 1)[1].strip().lower()
+            # is-failed prints "failed" or "active" (not failed) — never use as is_active
+            is_failed = state == "failed"
+    return {
+        "home_present": home_present,
+        "unit_file_present": unit_file_present,
+        "is_active": is_active,
+        "is_failed": is_failed,
+        "raw_lines": [ln.strip() for ln in (out or "").splitlines() if ln.strip()],
+    }
+
+
 def cmd_status(args) -> int:
     """Merged status: labeled sections; pointer absent is success."""
     host = _host_from_args(args)
@@ -217,47 +266,27 @@ def cmd_status(args) -> int:
         c, _, _ = open_pointer_paramiko(host=host, password=password)
         from paperpointer.sshutil import REMOTE_HOME, UNIT_ETC, UNIT_NAME, run
 
+        # Labeled fields: never free-mix is-active / is-failed bare tokens.
         out, _, _ = run(
             c,
             f"test -d {REMOTE_HOME} && echo HOME_YES || echo HOME_NO; "
             f"test -f {UNIT_ETC} && echo UNIT_YES || echo UNIT_NO; "
-            f"systemctl is-active {UNIT_NAME} 2>/dev/null || echo inactive; "
-            f"systemctl is-failed {UNIT_NAME} 2>/dev/null || true",
+            f'printf "ACTIVE:%s\\n" "$(systemctl is-active {UNIT_NAME} 2>/dev/null || echo inactive)"; '
+            f'printf "FAILED:%s\\n" "$(systemctl is-failed {UNIT_NAME} 2>/dev/null || echo unknown)"',
             timeout=20,
         )
-        lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-        home_present = any(ln == "HOME_YES" for ln in lines)
-        unit_file_present = any(ln == "UNIT_YES" for ln in lines)
-        is_failed = any(ln == "failed" for ln in lines)
-        is_active = None
-        for ln in lines:
-            if ln == "active":
-                is_active = True
-            elif ln in ("inactive", "failed"):
-                if is_active is not True:
-                    is_active = False
+        facts = parse_pointer_probe_output(out)
         pointer = classify_pointer_status(
-            home_present=home_present,
-            unit_file_present=unit_file_present,
-            is_active=is_active,
-            is_failed=is_failed,
+            home_present=facts["home_present"],
+            unit_file_present=facts["unit_file_present"],
+            is_active=facts["is_active"],
+            is_failed=facts["is_failed"],
         )
-        # Extra detail line for operators
         if not pointer.is_absent:
-            pointer.detail = pointer.detail + f" | raw={';'.join(lines)[:200]}"
+            pointer.detail = (
+                pointer.detail + f" | raw={';'.join(facts['raw_lines'])[:200]}"
+            )
     except Exception as e:
-        # Connection failure is real; probe parse issues for absent tablet path
-        # If we never got pointer facts, keep not_installed only when error is "not there"
-        # Connection errors are failures.
-        pointer = classify_pointer_status(
-            home_present=False,
-            unit_file_present=False,
-            is_active=None,
-        )
-        # Treat SSH failure after keyboard as failure of combined status only if kb also failed
-        # Pointer section reports probe error as detail but if we cannot connect at all
-        # and keyboard already failed, merge handles it. If keyboard ok but pointer SSH fails,
-        # that is a real failure.
         from core.status_merge import PointerStatus
 
         pointer = PointerStatus(
