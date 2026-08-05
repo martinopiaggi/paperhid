@@ -1,0 +1,16 @@
+[Unit]
+Description=Enable Bluetooth Keyboard Support (PaperWriter)
+# Do not hard-require bluetooth.service — on Paper Pro the controller only
+# appears after btnxpuart loads; this unit loads the module then starts bluez.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/root/.paperwriter/bt-keyboard.sh
+ExecStopPost=/bin/sh -c 'echo user.lock >> /sys/power/wake_unlock 2>/dev/null; echo paperwriter.bt >> /sys/power/wake_unlock 2>/dev/null; true'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+version     0.1.0
+
+; No overrides here — EPFramebuffer lives in a Qt plugin loaded after XOVI init.
+; Late trampolines are installed from _xovi_construct (see pp_cursor.c).

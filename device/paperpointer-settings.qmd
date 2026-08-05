@@ -1,0 +1,190 @@
+VERSION 3.28.0.164
+
+; Optional PaperPointer controls in Settings > Help. This is deliberately
+; independent from MainView and the cursor FIFO patch. Every command and
+; argument is fixed at parse time and routes through an allow-listed script.
+AFFECT /qml/device/view/settings/Help.qml
+    IMPORT net.asivery.CommandExecutor 1.0
+    IMPORT net.asivery.XoviMessageBroker 2.0
+
+    ; Make this a real ColumnLayout child rather than an overlay in itemWrapper:
+    ; the stock layout then reserves vertical space for the controls and support
+    ; text, so varying Help widgets cannot overlap the PaperPointer buttons.
+    TRAVERSE Background#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
+        LOCATE BEFORE ArkControls.Body#supportText
+        INSERT {
+            ColumnLayout {
+                id: paperPointerSettingsRoot
+                objectName: "paperpointer-settings-root"
+                spacing: ArkControls.Values.spacing.medium
+                Layout.fillWidth: true
+
+                property string actionStatus: qsTr("Ready")
+
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("PaperPointer")
+                }
+
+                ArkControls.Body {
+                    id: paperPointerStatusText
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: paperPointerSettingsRoot.actionStatus
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Keep cursor visible")
+                        enabled: !paperPointerStickyCommand.running
+                        onClicked: {
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperPointerStickyCommand.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Hide after 3 seconds")
+                        enabled: !paperPointerHideCommand.running
+                        onClicked: {
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperPointerHideCommand.startCommand(100);
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Crosshair cursor")
+                        enabled: !paperPointerStyleCrossCommand.running
+                        onClicked: {
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperPointerStyleCrossCommand.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Win95 cursor")
+                        enabled: !paperPointerStyleWin95Command.running
+                        onClicked: {
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperPointerStyleWin95Command.startCommand(100);
+                        }
+                    }
+                }
+
+                XoviMessageBroker {
+                    listeningFor: ["paperpointer.settings.ping"]
+
+                    function onSignalReceived(signal, message) {
+                        if (signal === "paperpointer.settings.ping")
+                            return "paperpointer-settings-qml-3.28.0.164";
+                        return "";
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerStatusCommand
+                    command: "/home/root/.paperpointer/ui-actions/status.sh"
+                    arguments: []
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerSettingsRoot.actionStatus = output.trim();
+                    }
+                    Component.onCompleted: startCommand(100)
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerStickyCommand
+                    command: "/home/root/.paperpointer/ui-actions/set-hide-ms.sh"
+                    arguments: ["0"]
+                    property bool launched: false
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerSettingsRoot.actionStatus = output.trim();
+                    }
+                    onRunningChanged: {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
+                            launched = false;
+                            paperPointerStatusCommand.startCommand(100);
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerHideCommand
+                    command: "/home/root/.paperpointer/ui-actions/set-hide-ms.sh"
+                    arguments: ["3000"]
+                    property bool launched: false
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerSettingsRoot.actionStatus = output.trim();
+                    }
+                    onRunningChanged: {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
+                            launched = false;
+                            paperPointerStatusCommand.startCommand(100);
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerStyleCrossCommand
+                    command: "/home/root/.paperpointer/ui-actions/set-cursor-style.sh"
+                    arguments: ["cross"]
+                    property bool launched: false
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerSettingsRoot.actionStatus = output.trim();
+                    }
+                    onRunningChanged: {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
+                            launched = false;
+                            paperPointerStatusCommand.startCommand(100);
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerStyleWin95Command
+                    command: "/home/root/.paperpointer/ui-actions/set-cursor-style.sh"
+                    arguments: ["win95"]
+                    property bool launched: false
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerSettingsRoot.actionStatus = output.trim();
+                    }
+                    onRunningChanged: {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
+                            launched = false;
+                            paperPointerStatusCommand.startCommand(100);
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT

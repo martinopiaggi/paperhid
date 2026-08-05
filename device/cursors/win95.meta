@@ -1,0 +1,6 @@
+# User-supplied Win95-style arrow (from arrow0.png, 32x32 source).
+# Displayed at 2x (64x64) in QML; tip hotspot stays top-left.
+hotspot_x=0
+hotspot_y=0
+size=64
+source_size=32

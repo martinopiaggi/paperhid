@@ -1,0 +1,206 @@
+VERSION 3.28.0.164
+
+; A scene-graph cursor for the exact xochitl build above.
+; The cursor itself uses no framebuffer pointer, private Qt call, or hot
+; swapBuffers patch. The surrounding XOVI resource rebuilder remains tethered.
+; Skin (cross | win95) is read from a one-line status file written by the daemon.
+; Cursor FIFO stays in upright logical coordinates. UI rotation for touch is
+; resolved by the daemon from xochitl logs — Qt Screen.orientation stays at
+; portrait on Paper Pro and must not drive touch mapping.
+AFFECT /qml/device/view/main/MainView.qml
+    IMPORT net.asivery.XoviMessageBroker 2.0
+    IMPORT net.asivery.CommandExecutor 1.0
+    IMPORT xofm.libs.epaper 1.0 Epaper
+
+    TRAVERSE Background
+        LOCATE AFTER ALL
+        INSERT {
+            Item {
+                id: paperPointerCursorLayer
+                anchors.fill: parent
+                clip: true
+                z: 1000000
+                visible: false
+
+                property real normalizedX: 0.5
+                property real normalizedY: 0.5
+                property bool streamSeen: false
+                // cross | win95 — win95 requires cursors/win95.png
+                property string cursorStyle: "cross"
+                property int spriteW: 33
+                property int spriteH: 33
+                property int hotspotX: 16
+                property int hotspotY: 16
+
+                function refreshSpriteMetrics() {
+                    if (paperPointerCursorLayer.cursorStyle === "win95" &&
+                        paperPointerWin95Image.status === Image.Ready) {
+                        // 2x the source PNG (32→64) for readability on e-ink.
+                        paperPointerCursorLayer.spriteW = 64;
+                        paperPointerCursorLayer.spriteH = 64;
+                        paperPointerCursorLayer.hotspotX = 0;
+                        paperPointerCursorLayer.hotspotY = 0;
+                    } else {
+                        // Crosshair (default) or win95 fallback while PNG loads.
+                        paperPointerCursorLayer.spriteW = 33;
+                        paperPointerCursorLayer.spriteH = 33;
+                        paperPointerCursorLayer.hotspotX = 16;
+                        paperPointerCursorLayer.hotspotY = 16;
+                    }
+                }
+
+                function applyCursorStyle(name) {
+                    var style = (name || "").trim().toLowerCase();
+                    if (style === "win95")
+                        paperPointerCursorLayer.cursorStyle = "win95";
+                    else
+                        paperPointerCursorLayer.cursorStyle = "cross";
+                    paperPointerCursorLayer.refreshSpriteMetrics();
+                }
+
+                function applyCursorMessage(message) {
+                    var fields = message.trim().split(",");
+                    if (fields.length !== 3)
+                        return;
+                    var nx = Number(fields[0]);
+                    var ny = Number(fields[1]);
+                    if (!isFinite(nx) || !isFinite(ny))
+                        return;
+
+                    paperPointerCursorLayer.streamSeen = true;
+                    paperPointerCursorLayer.normalizedX = Math.max(0, Math.min(1, nx));
+                    paperPointerCursorLayer.normalizedY = Math.max(0, Math.min(1, ny));
+                    // Visibility is owned by the daemon: stay painted while a
+                    // Bluetooth pointer is connected, even if it is idle.
+                    paperPointerCursorLayer.visible = fields[2] === "1";
+                }
+
+                XoviMessageBroker {
+                    listeningFor: ["paperpointer.ping"]
+
+                    function onSignalReceived(signal, message) {
+                        if (signal === "paperpointer.ping") {
+                            if (paperPointerCursorLayer.streamSeen &&
+                                paperPointerReader.running)
+                                return "paperpointer-qml-3.28.0.164";
+                            return "paperpointer-not-ready";
+                        }
+                        return "";
+                    }
+                }
+
+                Timer {
+                    id: paperPointerReaderRestartTimer
+                    interval: 250
+                    repeat: false
+                    onTriggered: {
+                        if (!paperPointerReader.running &&
+                            !paperPointerReader.startCommand(100))
+                            paperPointerReaderRestartTimer.restart();
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperPointerReader
+                    // Keep one read/write descriptor inherited by cat. Without
+                    // it, a daemon restart closes the FIFO's last writer, cat
+                    // exits on EOF, and some CommandExecutor builds do not
+                    // reliably relaunch it from onRunningChanged.
+                    command: "/bin/sh"
+                    arguments: ["-c", "[ -p /home/root/.paperpointer/cursor.fifo ] || exit 70; exec 3<>/home/root/.paperpointer/cursor.fifo; exec /bin/cat /home/root/.paperpointer/cursor.fifo"]
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerCursorLayer.applyCursorMessage(output);
+                    }
+                    onRunningChanged: {
+                        if (!running)
+                            paperPointerReaderRestartTimer.restart();
+                    }
+                    Component.onCompleted: {
+                        if (!startCommand(100))
+                            paperPointerReaderRestartTimer.restart();
+                    }
+                    Component.onDestruction: terminateCommand(100)
+                }
+
+                // Fixed path only: never accept free-form style text as a command.
+                AsyncCommandExecutor {
+                    id: paperPointerStyleReader
+                    command: "/bin/cat"
+                    arguments: ["/home/root/.paperpointer/cursor_style"]
+
+                    onStdOutAvailable: function(output) {
+                        paperPointerCursorLayer.applyCursorStyle(output);
+                    }
+                }
+
+                Timer {
+                    id: paperPointerStylePollTimer
+                    interval: 2000
+                    repeat: true
+                    running: true
+                    onTriggered: {
+                        if (!paperPointerStyleReader.running)
+                            paperPointerStyleReader.startCommand(100);
+                    }
+                }
+
+                Component.onCompleted: {
+                    if (!paperPointerStyleReader.startCommand(100))
+                        paperPointerStylePollTimer.restart();
+                }
+
+                // The mode item must cover both the old and new cursor damage.
+                // A moving 33x33 mode item only tags the new rectangle, so its
+                // erase can fall back to the slower UI waveform and leave the
+                // visible cursor behind the actual click target.
+                Epaper.ScreenModeItem {
+                    anchors.fill: parent
+                    objectName: "paperpointer-fast-region"
+                    mode: Epaper.ScreenModeItem.Pen
+
+                    Item {
+                        id: paperPointerSprite
+                        width: paperPointerCursorLayer.spriteW
+                        height: paperPointerCursorLayer.spriteH
+                        x: Math.round(paperPointerCursorLayer.normalizedX *
+                                      (paperPointerCursorLayer.width - 1)) -
+                           paperPointerCursorLayer.hotspotX
+                        y: Math.round(paperPointerCursorLayer.normalizedY *
+                                      (paperPointerCursorLayer.height - 1)) -
+                           paperPointerCursorLayer.hotspotY
+                        objectName: "paperpointer-cursor"
+
+                        // Optional PNG skin. If the file is missing or fails to
+                        // load, keep the geometry crosshair visible underneath.
+                        Image {
+                            id: paperPointerWin95Image
+                            anchors.fill: parent
+                            visible: paperPointerCursorLayer.cursorStyle === "win95" &&
+                                     status === Image.Ready
+                            source: "file:///home/root/.paperpointer/cursors/win95.png"
+                            fillMode: Image.PreserveAspectFit
+                            // Nearest-neighbor style scale: sharper 2x pixel arrow.
+                            smooth: false
+                            mipmap: false
+                            asynchronous: true
+                            cache: true
+                            onStatusChanged: paperPointerCursorLayer.refreshSpriteMetrics()
+                        }
+
+                        // Default geometry crosshair (centered hotspot).
+                        Item {
+                            anchors.fill: parent
+                            visible: paperPointerCursorLayer.cursorStyle !== "win95" ||
+                                     paperPointerWin95Image.status !== Image.Ready
+                            Rectangle { width: 33; height: 5; y: 14; color: "white" }
+                            Rectangle { width: 31; height: 3; x: 1; y: 15; color: "black" }
+                            Rectangle { width: 5; height: 33; x: 14; color: "white" }
+                            Rectangle { width: 3; height: 31; x: 15; y: 1; color: "black" }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT

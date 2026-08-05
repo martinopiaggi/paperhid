@@ -1,0 +1,16 @@
+[Unit]
+Description=PaperPointer mouse/touchpad to multitouch (Paper Pro)
+After=remarkable-bt-keyboard.service bluetooth.service
+Wants=remarkable-bt-keyboard.service
+
+[Service]
+Type=simple
+ExecStart=/home/root/.paperpointer/run.sh
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

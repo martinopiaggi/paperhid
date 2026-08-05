@@ -1,0 +1,10 @@
+[Unit]
+Description=PaperWriter XOVI Autostart
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /usr/lib/paperwriter-xovi-autostart.sh
+
+[Install]
+WantedBy=multi-user.target

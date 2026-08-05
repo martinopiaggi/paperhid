@@ -1,0 +1,50 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local secrets / machine-specific (password lives under ~/.paperwriter)
+*.pem
+*.key
+.env.local
+.env.*.local
+
+# Logs and temp
+*.log
+*.tmp
+tmp/
+temp/
