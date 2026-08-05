@@ -219,13 +219,18 @@ exit 3
 def preflight_tablet_python(c) -> int:
     """Check tablet-side Python before uploading pointer files.
 
-    paperpointerd requires ``/opt/bin/python3`` (Entware). A home-backed
-    ``/home/root/.entware`` bind is accepted. Returns 0 when ready, 2 when
-    missing — and does not upload anything.
+    paperpointerd requires a *runnable* ``/opt/bin/python3`` (Entware). A
+    home-backed ``/home/root/.entware`` bind is accepted. Presence of a
+    binary alone is not enough (partial Entware installs). Returns 0 when
+    ready, 2 when missing — and does not upload anything.
     """
     script = r"""
 set +e
-if [ -x /opt/bin/python3 ]; then
+_py_ok() {
+  [ -x /opt/bin/python3 ] || return 1
+  /opt/bin/python3 -c 'import sys; assert sys.version_info[0] >= 3' 2>/dev/null
+}
+if _py_ok; then
   echo "tablet_python: ok (/opt/bin/python3)"
   /opt/bin/python3 -V 2>&1 || true
   exit 0
@@ -234,10 +239,17 @@ if [ -x /home/root/.entware/bin/python3 ]; then
   mkdir -p /opt
   mountpoint -q /opt || mount --bind /home/root/.entware /opt
 fi
-if [ -x /opt/bin/python3 ]; then
+if _py_ok; then
   echo "tablet_python: ok (entware bind)"
   /opt/bin/python3 -V 2>&1 || true
   exit 0
+fi
+# Distinguish partial debris from a clean vanilla tablet.
+if [ -d /home/root/.entware ] || [ -x /opt/bin/python3 ] || [ -x /opt/bin/opkg ]; then
+  echo "ERROR: tablet Python incomplete — Entware debris present but /opt/bin/python3 not usable."
+  echo "A partial bootstrap is not a working install. Clean and re-run:"
+  echo "  python cli.py bootstrap-python"
+  exit 2
 fi
 echo "ERROR: tablet Python missing — need /opt/bin/python3 (Entware)."
 echo "Pointer install will not upload until this is fixed."

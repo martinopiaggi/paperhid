@@ -233,14 +233,70 @@ def _ensure_opt_mount(ssh):
     )
 
 
-def _ensure_entware(ssh, say):
+def _opkg_usable(ssh) -> bool:
+    """True only when Entware ``opkg`` is present *and* runs.
+
+    A partial failed install can leave an ``opkg`` binary (or empty tree) that
+    must not be treated as a working package manager.
+    """
+    _ensure_opt_mount(ssh)
     _, _, code = ssh.exec(
-        "command -v opkg || test -x /opt/bin/opkg || test -x /home/root/.entware/bin/opkg",
+        "export PATH=/opt/bin:/opt/sbin:$PATH; "
+        "test -x /opt/bin/opkg && /opt/bin/opkg --version >/dev/null 2>&1",
+        timeout=20,
+    )
+    return code == 0
+
+
+def _tablet_python_usable(ssh) -> bool:
+    """True only when Entware ``/opt/bin/python3`` executes successfully.
+
+    Presence of a binary is not enough; a half-written Entware tree can leave
+    a non-runnable python3 that would break paperpointerd at service start.
+    """
+    _ensure_opt_mount(ssh)
+    _, _, code = ssh.exec(
+        "test -x /opt/bin/python3 && "
+        "/opt/bin/python3 -c 'import sys; assert sys.version_info[0] >= 3'",
+        timeout=20,
+    )
+    return code == 0
+
+
+def _partial_entware_debris(ssh) -> bool:
+    """Detect leftover Entware paths from a previous incomplete install."""
+    _, _, code = ssh.exec(
+        "test -d /home/root/.entware || test -f /tmp/rmpp_entware.sh",
         timeout=5,
     )
-    if code == 0:
-        _ensure_opt_mount(ssh)
+    return code == 0
+
+
+def _cleanup_partial_entware(ssh, say):
+    """Remove an incomplete Entware tree so a later bootstrap can reinstall.
+
+    Only call when :func:`_opkg_usable` is false — never wipe a working Entware
+    just because python3 is missing (``opkg install python3`` can be re-run).
+    """
+    say("Removing incomplete Entware install so bootstrap can retry cleanly...")
+    ssh.exec(
+        "set +e; "
+        "if mountpoint -q /opt 2>/dev/null; then umount /opt 2>/dev/null; fi; "
+        "mount -o remount,rw / 2>/dev/null; "
+        "rm -rf /home/root/.entware /tmp/rmpp_entware.sh; "
+        'if [ -d /opt ] && [ -z "$(ls -A /opt 2>/dev/null)" ]; then rmdir /opt 2>/dev/null; fi; '
+        "mount -o remount,ro / 2>/dev/null; true",
+        timeout=90,
+    )
+
+
+def _ensure_entware(ssh, say):
+    if _opkg_usable(ssh):
         return
+    # Broken leftover tree: presence of opkg path alone used to short-circuit
+    # reinstall and leave the device unusable for pointer bootstrap.
+    if _partial_entware_debris(ssh):
+        _cleanup_partial_entware(ssh, say)
     say("Installing entware (package manager)...")
     ssh.exec(
         "mount -o remount,rw / 2>/dev/null; "
@@ -257,28 +313,32 @@ def _ensure_entware(ssh, say):
         timeout=360,
     )
     _ensure_opt_mount(ssh)
-    _, _, code = ssh.exec(
-        "test -x /opt/bin/opkg || test -x /home/root/.entware/bin/opkg", timeout=5
-    )
-    if code != 0:
+    if not _opkg_usable(ssh):
+        # Do not leave a half-installed tree that a later preflight might
+        # mis-read as "entware present".
+        try:
+            _cleanup_partial_entware(ssh, say)
+        except Exception:
+            pass
         raise RuntimeError(
-            "entware install failed\n" + ((out or "") + "\n" + (err or ""))[-500:]
+            "entware install failed (opkg not usable after install)\n"
+            + ((out or "") + "\n" + (err or ""))[-500:]
         )
 
 
 def _ensure_python3(ssh, say):
-    _ensure_opt_mount(ssh)
-    _, _, code = ssh.exec("test -x /opt/bin/python3 || command -v python3", timeout=5)
-    if code == 0:
+    if _tablet_python_usable(ssh):
         return
     say("Installing Python 3...")
-    ssh.exec(
+    out, err, _ = ssh.exec(
         "export PATH=/opt/bin:/opt/sbin:$PATH && opkg update && opkg install python3",
         timeout=300,
     )
-    _, _, code = ssh.exec("test -x /opt/bin/python3", timeout=5)
-    if code != 0:
-        raise RuntimeError("Python 3 install failed")
+    if not _tablet_python_usable(ssh):
+        raise RuntimeError(
+            "Python 3 install failed (/opt/bin/python3 not usable)\n"
+            + ((out or "") + "\n" + (err or ""))[-500:]
+        )
 
 
 def ensure_tablet_python(ssh, status_cb=None):
@@ -286,6 +346,11 @@ def ensure_tablet_python(ssh, status_cb=None):
 
     Required by paperpointerd (mouse). Needs free space on /home and tablet
     internet (Wi‑Fi) for the first bootstrap. Safe to re-run.
+
+    Partial Entware trees are never treated as success: ``opkg`` and
+    ``/opt/bin/python3`` must both *execute*. Failed Entware installs are
+    cleaned up so the next attempt is a clean bootstrap, not a false ready
+    state.
     """
     def say(msg):
         if status_cb:
@@ -294,11 +359,19 @@ def ensure_tablet_python(ssh, status_cb=None):
             print(msg)
 
     _preflight_space(ssh)
-    _ensure_entware(ssh, say)
-    _ensure_python3(ssh, say)
-    _ensure_opt_mount(ssh)
-    _, _, code = ssh.exec("test -x /opt/bin/python3", timeout=5)
-    if code != 0:
+    try:
+        _ensure_entware(ssh, say)
+        _ensure_python3(ssh, say)
+    except Exception:
+        # If Entware itself is broken after failure, clear debris for retry.
+        # Leave a working opkg alone when only python install failed.
+        try:
+            if not _opkg_usable(ssh) and _partial_entware_debris(ssh):
+                _cleanup_partial_entware(ssh, say)
+        except Exception:
+            pass
+        raise
+    if not _tablet_python_usable(ssh):
         raise RuntimeError(
             "Tablet Python still missing after bootstrap "
             "(/opt/bin/python3). Check tablet internet (Wi‑Fi) and free space."

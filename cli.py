@@ -450,28 +450,75 @@ def cmd_pointer(args) -> int:
 # --- Parser ------------------------------------------------------------------
 
 
+def shared_root_flags(*, for_subparser: bool = False) -> argparse.ArgumentParser:
+    """SSH/auth flags that work before *or* after the subcommand.
+
+    Subparsers use ``default=argparse.SUPPRESS`` so a flag given on the parent
+    (before the subcommand) is not wiped by the child default. Mirrors
+    ``paperpointer.cli.shared_flag_parser``.
+    """
+    shared = argparse.ArgumentParser(add_help=False)
+    default = argparse.SUPPRESS if for_subparser else None
+    save_default = argparse.SUPPRESS if for_subparser else False
+    timeout_default = argparse.SUPPRESS if for_subparser else 15
+    shared.add_argument(
+        "--ip",
+        default=default,
+        help="Tablet IP (default 10.11.99.1)",
+    )
+    shared.add_argument(
+        "--host",
+        default=default,
+        help="Alias for --ip",
+    )
+    shared.add_argument(
+        "--password",
+        default=default,
+        help="SSH password",
+    )
+    shared.add_argument(
+        "--save-password",
+        action="store_true",
+        default=save_default,
+        help="Save password to ~/.paperwriter/config.json",
+    )
+    shared.add_argument("--timeout", type=int, default=timeout_default)
+    return shared
+
+
 def build_parser() -> argparse.ArgumentParser:
+    parent_shared = shared_root_flags(for_subparser=False)
     p = argparse.ArgumentParser(
         prog="paperhid",
         description="PaperHid: Bluetooth keyboard + mouse/pointer for reMarkable Paper Pro",
+        parents=[parent_shared],
     )
-    p.add_argument("--ip", default=None, help="Tablet IP (default 10.11.99.1)")
-    p.add_argument("--host", default=None, help="Alias for --ip")
-    p.add_argument("--password", default=None, help="SSH password")
-    p.add_argument(
-        "--save-password",
-        action="store_true",
-        help="Save password to ~/.paperwriter/config.json",
+    # Explicit defaults when only parent-level flags are used (or none).
+    p.set_defaults(
+        ip=None,
+        host=None,
+        password=None,
+        save_password=False,
+        timeout=15,
     )
-    p.add_argument("--timeout", type=int, default=15)
+    child_shared = shared_root_flags(for_subparser=True)
     sub = p.add_subparsers(dest="command", required=True)
 
     # Combined
-    sub.add_parser("detect", help="Merged device + pointer detect")
-    sub.add_parser("status", help="Merged keyboard + pointer status")
+    sub.add_parser(
+        "detect",
+        parents=[child_shared],
+        help="Merged device + pointer detect",
+    )
+    sub.add_parser(
+        "status",
+        parents=[child_shared],
+        help="Merged keyboard + pointer status",
+    )
 
     inst = sub.add_parser(
         "install",
+        parents=[child_shared],
         help="Install keyboard service, pointer daemon, or both",
     )
     g = inst.add_mutually_exclusive_group(required=True)
@@ -493,46 +540,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not auto-install Entware/Python if missing (pointer)",
     )
 
-    un = sub.add_parser("uninstall", help="Uninstall keyboard, pointer, or both")
+    un = sub.add_parser(
+        "uninstall",
+        parents=[child_shared],
+        help="Uninstall keyboard, pointer, or both",
+    )
     ug = un.add_mutually_exclusive_group(required=True)
     ug.add_argument("--keyboard", action="store_true")
     ug.add_argument("--pointer", action="store_true")
     ug.add_argument("--all", action="store_true")
 
-    isvc = sub.add_parser("install-service", help="Alias: install --keyboard")
+    isvc = sub.add_parser(
+        "install-service",
+        parents=[child_shared],
+        help="Alias: install --keyboard",
+    )
     isvc.add_argument(
         "--wait",
         type=int,
         default=12,
         help="BT controller wait seconds",
     )
-    sub.add_parser("uninstall-service", help="Alias: uninstall --keyboard")
+    sub.add_parser(
+        "uninstall-service",
+        parents=[child_shared],
+        help="Alias: uninstall --keyboard",
+    )
     sub.add_parser(
         "bootstrap-python",
+        parents=[child_shared],
         help="Install Entware + Python 3 on tablet (mouse prerequisite)",
     )
-    sp = sub.add_parser("ssh")
+    sp = sub.add_parser("ssh", parents=[child_shared])
     sp.add_argument("remote_cmd", nargs="?", default="uname -a")
-    sp = sub.add_parser("scan")
+    sp = sub.add_parser("scan", parents=[child_shared])
     sp.add_argument("--scan-timeout", type=int, default=22)
-    sp = sub.add_parser("pair")
+    sp = sub.add_parser("pair", parents=[child_shared])
     sp.add_argument("--mac", default=None)
     sp.add_argument("--name", default="")
     sp.add_argument("--scan-timeout", type=int, default=22)
-    sp = sub.add_parser("save-mac")
+    sp = sub.add_parser("save-mac", parents=[child_shared])
     sp.add_argument("--mac", required=True)
     sp.add_argument("--name", default="")
-    sp = sub.add_parser("unpair")
+    sp = sub.add_parser("unpair", parents=[child_shared])
     sp.add_argument("--mac", default=None)
-    sub.add_parser("refuse-layout")
-    sub.add_parser("refuse-native")
-    sp = sub.add_parser("diagnose")
+    sub.add_parser("refuse-layout", parents=[child_shared])
+    sub.add_parser("refuse-native", parents=[child_shared])
+    sp = sub.add_parser("diagnose", parents=[child_shared])
     sp.add_argument("--probe-scan", action="store_true")
 
     # Pointer nested: paperhid pointer <cmd>
     from paperpointer.cli import register_pointer_commands, shared_flag_parser
 
-    ptr = sub.add_parser("pointer", help="Pointer/mouse commands (same as python -m paperpointer)")
+    ptr = sub.add_parser(
+        "pointer",
+        parents=[child_shared],
+        help="Pointer/mouse commands (same as python -m paperpointer)",
+    )
     # Nested pointer uses root --password/--host; also allow after subcommand via shared
     shared = shared_flag_parser(for_subparser=True)
     ptr_sub = ptr.add_subparsers(dest="pointer_cmd", required=True)

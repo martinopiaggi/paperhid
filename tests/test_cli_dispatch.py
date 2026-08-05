@@ -436,6 +436,31 @@ class TestRootCliInstallModes(unittest.TestCase):
         with self.assertRaises(SystemExit):
             p.parse_args(["install", "--keyboard", "--pointer"])
 
+    def test_global_flags_before_and_after_subcommand(self):
+        """README form: install --all --save-password (flag after subcommand)."""
+        import cli as root_cli
+
+        p = root_cli.build_parser()
+        # README main path — must not argparse-reject.
+        after = p.parse_args(
+            ["install", "--all", "--save-password", "--password", "pw"]
+        )
+        self.assertTrue(after.all)
+        self.assertTrue(after.save_password)
+        self.assertEqual(after.password, "pw")
+        # Also still works before the subcommand.
+        before = p.parse_args(
+            ["--save-password", "--password", "x", "--host", "1.2.3.4", "install", "--all"]
+        )
+        self.assertTrue(before.save_password)
+        self.assertEqual(before.password, "x")
+        self.assertEqual(before.host, "1.2.3.4")
+        self.assertTrue(before.all)
+        # Detect with flag after
+        det = p.parse_args(["detect", "--timeout", "9"])
+        self.assertEqual(det.timeout, 9)
+        self.assertFalse(det.save_password)
+
     def test_install_service_alias_accepts_wait(self):
         """Compat: python cli.py install-service --wait N (PaperWriter CLI)."""
         import cli as root_cli
@@ -578,6 +603,127 @@ class TestRootCliInstallModes(unittest.TestCase):
                     code = ppcli.cmd_install(conn, bootstrap=True)
         self.assertEqual(code, 2)
         put.assert_not_called()
+
+
+class TestEntwareBootstrapUsability(unittest.TestCase):
+    """Partial Entware must not be mistaken for a usable install."""
+
+    def _ssh(self, results):
+        """results: list of (out, err, code) or a callable(cmd)->triple."""
+        ssh = MagicMock()
+
+        def exec_side_effect(cmd, timeout=5):
+            if callable(results):
+                return results(cmd)
+            if not results:
+                return "", "", 1
+            return results.pop(0)
+
+        ssh.exec.side_effect = exec_side_effect
+        return ssh
+
+    def test_opkg_usable_requires_version_exit_zero(self):
+        from core import native_app_installer as nai
+
+        # Binary present but --version fails → not usable
+        def results(cmd):
+            if "mount" in cmd and "bind" in cmd:
+                return "", "", 0
+            if "opkg --version" in cmd:
+                return "", "segfault", 1
+            return "", "", 1
+
+        self.assertFalse(nai._opkg_usable(self._ssh(results)))
+
+        def ok(cmd):
+            if "opkg --version" in cmd:
+                return "opkg version 1.0", "", 0
+            return "", "", 0
+
+        self.assertTrue(nai._opkg_usable(self._ssh(ok)))
+
+    def test_tablet_python_usable_requires_exec(self):
+        from core import native_app_installer as nai
+
+        def broken(cmd):
+            if "mount" in cmd:
+                return "", "", 0
+            if "python3 -c" in cmd:
+                return "", "ImportError", 1
+            return "", "", 1
+
+        self.assertFalse(nai._tablet_python_usable(self._ssh(broken)))
+
+        def ok(cmd):
+            if "python3 -c" in cmd:
+                return "3", "", 0
+            return "", "", 0
+
+        self.assertTrue(nai._tablet_python_usable(self._ssh(ok)))
+
+    def test_ensure_entware_cleans_partial_debris_before_reinstall(self):
+        from core import native_app_installer as nai
+
+        calls = []
+
+        def results(cmd):
+            calls.append(cmd)
+            # First usability probe fails; debris present; then reinstall path
+            if "opkg --version" in cmd:
+                # After cleanup+install, second phase still fails → error path
+                return "", "", 1
+            if "test -d /home/root/.entware" in cmd and "rmpp_entware" in cmd:
+                return "", "", 0  # debris present
+            if "rm -rf /home/root/.entware" in cmd:
+                return "", "", 0
+            if "rmpp_entware.sh" in cmd and "wget" in cmd:
+                return "partial fail", "network", 1
+            return "", "", 0
+
+        ssh = self._ssh(results)
+        with self.assertRaises(RuntimeError) as ctx:
+            nai._ensure_entware(ssh, say=lambda m: None)
+        self.assertIn("entware install failed", str(ctx.exception))
+        # Must have attempted cleanup of partial tree (before and/or after fail)
+        cleaned = [c for c in calls if "rm -rf /home/root/.entware" in c]
+        self.assertTrue(cleaned, "expected partial Entware cleanup")
+
+    def test_ensure_entware_skips_install_when_opkg_usable(self):
+        from core import native_app_installer as nai
+
+        def results(cmd):
+            if "opkg --version" in cmd:
+                return "opkg 1", "", 0
+            return "", "", 0
+
+        ssh = self._ssh(results)
+        nai._ensure_entware(ssh, say=lambda m: None)
+        wget_calls = [c for c, in ((call.args[0],) for call in ssh.exec.call_args_list)
+                      if "rmpp_entware" in c and "wget" in c]
+        # Simpler: no wget
+        all_cmds = [call.args[0] for call in ssh.exec.call_args_list]
+        self.assertFalse(any("wget" in c and "rmpp_entware" in c for c in all_cmds))
+
+    def test_ensure_python3_does_not_accept_non_opt_python(self):
+        """command -v python3 alone must not short-circuit Entware python."""
+        from core import native_app_installer as nai
+
+        state = {"n": 0}
+
+        def results(cmd):
+            if "python3 -c" in cmd:
+                # Never usable → forces install then still fails
+                return "", "", 1
+            if "opkg update" in cmd or "opkg install" in cmd:
+                state["n"] += 1
+                return "Installing python3", "", 0
+            return "", "", 0
+
+        ssh = self._ssh(results)
+        with self.assertRaises(RuntimeError) as ctx:
+            nai._ensure_python3(ssh, say=lambda m: None)
+        self.assertIn("Python 3 install failed", str(ctx.exception))
+        self.assertGreaterEqual(state["n"], 1)
 
 
 class TestRegisterOnCustomParser(unittest.TestCase):
