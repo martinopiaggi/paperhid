@@ -18,11 +18,7 @@ ENABLE_LINK_ETC = f"/etc/systemd/system/multi-user.target.wants/{UNIT_NAME}"
 
 
 def password_from_env(cli_password: str | None = None) -> str:
-    """Resolve SSH password with monorepo precedence (CLI first).
-
-    Order: ``--password`` → ``PAPERWRITER_PASSWORD`` → ``PAPERPOINTER_PASSWORD``
-    → ``MOVEWRITER_PASSWORD`` → host ``~/.paperwriter/config.json``.
-    """
+    """Resolve SSH password (CLI first; see core.credentials)."""
     try:
         from core.credentials import require_password
 
@@ -30,10 +26,10 @@ def password_from_env(cli_password: str | None = None) -> str:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     except ImportError:
-        # Fallback if core is not on path (should not happen in PaperHid).
         if cli_password:
             return cli_password
         for key in (
+            "PAPERHID_PASSWORD",
             "PAPERWRITER_PASSWORD",
             "PAPERPOINTER_PASSWORD",
             "MOVEWRITER_PASSWORD",
@@ -42,7 +38,7 @@ def password_from_env(cli_password: str | None = None) -> str:
             if v:
                 return v
         raise SystemExit(
-            "SSH password required. Pass --password or set PAPERWRITER_PASSWORD."
+            "SSH password required. Pass --password or set PAPERHID_PASSWORD."
         )
 
 

@@ -1,17 +1,8 @@
-"""SSH connection policy for PaperHid monorepo.
+"""SSH connection policy for PaperHid.
 
-v1 policy (documented and intentional):
-
-* **Keyboard / PaperWriter operations** use ``core.ssh_client.SSHClient``
-  (thread-safe wrapper with ``exec`` / upload helpers).
-* **Pointer / PaperPointer operations** use a **raw Paramiko** client from
-  ``paperpointer.sshutil.connect`` (handlers expect Paramiko + ``run``/``put_tree``).
-* **Combined commands** (``install --all``, merged ``status``/``detect``) open
-  **sequential single-purpose connections**: keyboard work first (SSHClient),
-  then pointer work (raw Paramiko). Connections are closed after each phase.
-  They do **not** share one live dual-client session in v1.
-
-This avoids ambiguous dual-client ownership while keeping both stacks intact.
+* Keyboard ops use ``core.ssh_client.SSHClient``.
+* Pointer ops use raw Paramiko (``paperpointer.sshutil.connect``).
+* Combined commands open sequential connections (keyboard, then pointer).
 """
 from __future__ import annotations
 
@@ -28,7 +19,7 @@ def open_keyboard_ssh(
     password: Optional[str] = None,
     timeout: int = 15,
 ) -> Tuple[SSHClient, str, str]:
-    """Open PaperWriter-style SSHClient. Returns (client, host, password)."""
+    """Open keyboard-stack SSHClient. Returns (client, host, password)."""
     h = resolve_host(cli_host=host, cli_ip=ip)
     pw = require_password(password)
     ssh = SSHClient()

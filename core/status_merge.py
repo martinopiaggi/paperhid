@@ -1,17 +1,7 @@
-"""Combined keyboard + pointer status semantics for PaperHid.
+"""Keyboard + pointer status classification for PaperHid.
 
-Shared state model for each optional component:
-
-* **not_installed** — no unit/service registration; exit 0 (optional component absent)
-* **staged** — residual home files only (e.g. after uninstall that keeps payload); exit 0
-* **active** — unit present and running; exit 0
-* **inactive** / **failed** — unit present but not healthy; exit 1
-* **unknown** — probe incomplete; exit 0 for informational ambiguity, nonzero only when
-  we know the unit is registered and unhealthy
-
-Combined status prints labeled keyboard and pointer sections, attempts both, and
-returns nonzero only for a real failure — not merely because an optional
-component is absent or only residual files remain.
+States: not_installed | staged | active | inactive | failed | unknown.
+Exit 0 unless a registered unit is inactive/failed.
 """
 from __future__ import annotations
 

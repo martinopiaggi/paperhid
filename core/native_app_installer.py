@@ -1,6 +1,6 @@
-"""Install/uninstall PaperWriter Native (on-device app) via SSH.
+"""Install/uninstall PaperHid on-device app via SSH.
 
-Deploys XOVI + AppLoad + PaperWriter to Paper Pro/Move, plus a systemd drop-in
+Deploys XOVI + AppLoad + app package to Paper Pro/Move, plus a systemd drop-in
 that disables xochitl's watchdog during BT ops.
 """
 import os
@@ -76,7 +76,7 @@ def native_app_root():
         if os.path.isdir(bundled):
             return bundled
     raise RuntimeError(
-        "Cannot locate PaperWriter native app source (expected nativeapp/)."
+        "Cannot locate PaperHid native app source (expected nativeapp/)."
     )
 
 
@@ -161,7 +161,7 @@ def install(ssh, status_cb=None):
 
     _rebuild_hashtable(ssh, say)
     _activate_xovi(ssh, say)
-    say("Install complete — open ☰ → AppLoad → PaperWriter")
+    say("Install complete — open ☰ → AppLoad → PaperHid")
 
 
 def uninstall(ssh, status_cb=None):
@@ -408,7 +408,7 @@ def _rebuild_hashtable(ssh, say):
 
 
 def _activate_xovi(ssh, say):
-    say("Activating PaperWriter...")
+    say("Activating PaperHid...")
     ssh.exec(f"mkdir -p {HOME_STATE_DIR}", timeout=5)
     ssh.exec(f"rm -f {ATTEMPTS_FILE} 2>/dev/null || true", timeout=5)
     ssh.exec(f"bash {AUTOSTART_SCRIPT_PATH}", timeout=90)

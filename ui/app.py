@@ -10,7 +10,7 @@ from core import config
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("PaperWriter")
+        self.root.title("PaperHid")
         # Cap the window to the available screen height so the whole window
         # (and its scrollbar) stays on-screen on low-res displays; the content
         # scrolls inside MainScreen when it doesn't all fit.

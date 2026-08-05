@@ -1,4 +1,4 @@
-"""Console logging helpers for PaperWriter (GUI + CLI)."""
+"""Console logging helpers for PaperHid (GUI + CLI)."""
 from __future__ import annotations
 
 import logging

@@ -1,7 +1,7 @@
 import QtQuick 2.15
 import net.asivery.AppLoad 1.0
 
-// PaperWriter Native — AppLoad root component
+// PaperHid on-device app (AppLoad)
 
 Item {
     id: root
@@ -116,7 +116,7 @@ Item {
     // Title
     Text {
         id: title
-        text: "PaperWriter"
+        text: "PaperHid"
         font.pixelSize: 48
         font.bold: true
         color: "black"

@@ -1,27 +1,16 @@
 # Cursor skins
 
-PaperPointer draws the pointer in QML. Styles:
+Optional pointer skins for PaperHid:
 
 | Style | Asset | Hotspot |
 | --- | --- | --- |
-| `cross` | Geometry in `paperpointer-cursor.qmd` | center (16,16) of 33×33 |
-| `win95` | `win95.png` + `win95.meta` | tip from meta (default 0,0) |
-
-## Install path on the tablet
-
-```text
-/home/root/.paperpointer/cursors/win95.png
-/home/root/.paperpointer/cursors/win95.meta
-```
-
-`install` and `enable-cursor` upload this directory. Choose the style with:
+| `cross` | Geometry crosshair | center |
+| `win95` | `win95.png` + `win95.meta` | tip from meta |
 
 ```bash
-python -m paperpointer.cli cursor-style win95
-python -m paperpointer.cli cursor-style cross
+python cli.py pointer cursor-style win95
+python cli.py pointer cursor-style cross
 ```
-
-or **Settings > Help** after `enable-settings-ui`.
 
 ## Using your own PNG
 

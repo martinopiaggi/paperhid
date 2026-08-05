@@ -1,6 +1,6 @@
-"""Headless CLI for PaperWriter (connect / service / scan / pair).
+"""Keyboard-only CLI helpers used by PaperHid (scan / pair / service).
 
-Password: --password, PAPERWRITER_PASSWORD (or MOVEWRITER_PASSWORD), or config.
+Password: --password, PAPERHID_PASSWORD (or legacy aliases), or config.
 Never prints the password. Does not write it unless --save-password.
 """
 from __future__ import annotations
@@ -282,7 +282,7 @@ def cmd_diagnose(args):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="PaperWriter headless CLI (reMarkable Paper Pro)")
+    p = argparse.ArgumentParser(description="PaperHid keyboard CLI (reMarkable Paper Pro)")
     p.add_argument("--ip", default=None)
     p.add_argument("--password", default=None)
     p.add_argument("--save-password", action="store_true")

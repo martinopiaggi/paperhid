@@ -973,7 +973,7 @@ def build_parser() -> argparse.ArgumentParser:
     parent_shared = shared_flag_parser(for_subparser=False)
     p = argparse.ArgumentParser(
         prog="paperpointer",
-        description="Paper Pro mouse/touchpad to touch (PaperHid)",
+        description="PaperHid pointer (mouse/touchpad → touch)",
         parents=[parent_shared],
     )
     p.set_defaults(host=DEFAULT_HOST, password=None)

@@ -9,7 +9,7 @@ log = get_logger("main")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="PaperWriter desktop app")
+    parser = argparse.ArgumentParser(description="PaperHid desktop app")
     parser.add_argument(
         "-q", "--quiet",
         action="store_true",
@@ -29,7 +29,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     setup_logging(verbose=not args.quiet, debug=args.debug)
-    log.info("PaperWriter starting (python %s)", sys.version.split()[0])
+    log.info("PaperHid starting (python %s)", sys.version.split()[0])
 
     root = tk.Tk()
     App(root)
@@ -37,7 +37,7 @@ def main(argv=None):
     try:
         root.mainloop()
     finally:
-        log.info("PaperWriter exited")
+        log.info("PaperHid exited")
 
 
 if __name__ == "__main__":

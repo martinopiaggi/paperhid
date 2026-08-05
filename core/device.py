@@ -1,6 +1,6 @@
 """Detect reMarkable device model over SSH.
 
-PaperWriter targets the reMarkable Paper Pro (codename Ferrari). Detection also
+PaperHid targets the reMarkable Paper Pro (codename Ferrari). Detection also
 recognizes Move. Keyboard language patches the keymap in libepaper.so.
 On-device native app (XOVI/AppLoad) is supported on Paper Pro and Move.
 """

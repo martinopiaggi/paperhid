@@ -27,23 +27,23 @@ class TestPasswordPrecedence(unittest.TestCase):
                 os.environ[k] = v
 
     def test_cli_password_wins_over_all_env(self):
+        os.environ["PAPERHID_PASSWORD"] = "from-hid"
         os.environ["PAPERWRITER_PASSWORD"] = "from-writer"
-        os.environ["PAPERPOINTER_PASSWORD"] = "from-pointer"
         os.environ["MOVEWRITER_PASSWORD"] = "from-move"
         self.assertEqual(
             resolve_password("from-cli", use_config=False),
             "from-cli",
         )
 
-    def test_paperwriter_env_before_compat(self):
-        os.environ["PAPERPOINTER_PASSWORD"] = "from-pointer"
+    def test_paperhid_env_before_legacy(self):
+        os.environ["PAPERWRITER_PASSWORD"] = "from-writer"
+        os.environ["PAPERHID_PASSWORD"] = "from-hid"
+        self.assertEqual(resolve_password(None, use_config=False), "from-hid")
+
+    def test_legacy_writer_before_movewriter(self):
+        os.environ["MOVEWRITER_PASSWORD"] = "from-move"
         os.environ["PAPERWRITER_PASSWORD"] = "from-writer"
         self.assertEqual(resolve_password(None, use_config=False), "from-writer")
-
-    def test_paperpointer_before_movewriter(self):
-        os.environ["MOVEWRITER_PASSWORD"] = "from-move"
-        os.environ["PAPERPOINTER_PASSWORD"] = "from-pointer"
-        self.assertEqual(resolve_password(None, use_config=False), "from-pointer")
 
     def test_movewriter_last_env(self):
         os.environ["MOVEWRITER_PASSWORD"] = "from-move"
@@ -72,7 +72,12 @@ class TestPasswordPrecedence(unittest.TestCase):
 class TestHostResolve(unittest.TestCase):
     def test_default_host(self):
         with patch.dict(os.environ, {}, clear=False):
-            for k in ("PAPERWRITER_IP", "PAPERPOINTER_HOST", "MOVEWRITER_IP"):
+            for k in (
+                "PAPERHID_IP",
+                "PAPERWRITER_IP",
+                "PAPERPOINTER_HOST",
+                "MOVEWRITER_IP",
+            ):
                 os.environ.pop(k, None)
             self.assertEqual(resolve_host(use_config=False), "10.11.99.1")
 
@@ -101,15 +106,15 @@ class TestPaperpointerPasswordCompat(unittest.TestCase):
     def test_cli_password_first_via_sshutil(self):
         from paperpointer.sshutil import password_from_env
 
-        os.environ["PAPERWRITER_PASSWORD"] = "env-should-lose"
+        os.environ["PAPERHID_PASSWORD"] = "env-should-lose"
         self.assertEqual(password_from_env("cli-wins"), "cli-wins")
 
-    def test_writer_env_via_sshutil(self):
+    def test_paperhid_env_via_sshutil(self):
         from paperpointer.sshutil import password_from_env
 
-        os.environ["PAPERPOINTER_PASSWORD"] = "ptr"
         os.environ["PAPERWRITER_PASSWORD"] = "wrt"
-        self.assertEqual(password_from_env(None), "wrt")
+        os.environ["PAPERHID_PASSWORD"] = "hid"
+        self.assertEqual(password_from_env(None), "hid")
 
 
 if __name__ == "__main__":

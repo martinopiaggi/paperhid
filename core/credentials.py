@@ -1,11 +1,11 @@
 """Unified SSH credential and host resolution for PaperHid.
 
-Precedence (both root CLI and paperpointer compatibility entry points):
+Precedence:
 
   1. CLI ``--password``
-  2. ``PAPERWRITER_PASSWORD``
-  3. Compatibility env: ``PAPERPOINTER_PASSWORD``, then ``MOVEWRITER_PASSWORD``
-  4. Host-side ``~/.paperwriter/config.json`` (base64 field)
+  2. ``PAPERHID_PASSWORD``
+  3. Legacy aliases (still accepted)
+  4. Host-side saved config (``--save-password``)
 
 Never prints the password.
 """
@@ -18,12 +18,14 @@ DEFAULT_HOST = "10.11.99.1"
 
 # Env keys after CLI --password (primary first, then compatibility aliases).
 ENV_PASSWORD_KEYS = (
+    "PAPERHID_PASSWORD",
     "PAPERWRITER_PASSWORD",
     "PAPERPOINTER_PASSWORD",
     "MOVEWRITER_PASSWORD",
 )
 
 ENV_HOST_KEYS = (
+    "PAPERHID_IP",
     "PAPERWRITER_IP",
     "PAPERPOINTER_HOST",
     "MOVEWRITER_IP",
@@ -88,7 +90,7 @@ def require_password(cli_password: Optional[str] = None, *, use_config: bool = T
     pw = resolve_password(cli_password, use_config=use_config)
     if not pw:
         raise ValueError(
-            "SSH password required. Pass --password, set PAPERWRITER_PASSWORD "
-            "(or PAPERPOINTER_PASSWORD / MOVEWRITER_PASSWORD), or save config."
+            "SSH password required. Pass --password, set PAPERHID_PASSWORD, "
+            "or save config with --save-password after a successful connect."
         )
     return pw

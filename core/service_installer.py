@@ -260,7 +260,7 @@ def sync_to_device(ssh, force=False):
 
 def install(ssh):
     """Install script + units to home (canonical) and seed /usr + /etc."""
-    log.info("installing PaperWriter BT service")
+    log.info("installing PaperHid BT service")
     status = sync_to_device(ssh, force=True)
     log.info("install ok: %s", status)
     return status

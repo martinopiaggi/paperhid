@@ -1,18 +1,9 @@
-"""PaperHid unified CLI — keyboard + pointer for reMarkable Paper Pro.
+"""PaperHid CLI — Bluetooth keyboard + mouse for reMarkable Paper Pro.
 
-Install modes (mutually exclusive, required for ``install`` / ``uninstall``)::
+    python cli.py install --keyboard | --pointer | --all
+    python cli.py status | scan | pair | …
 
-    python cli.py install --keyboard
-    python cli.py install --pointer
-    python cli.py install --all
-
-Partial failure for ``--all``: keyboard runs first; on keyboard failure pointer
-is skipped; on pointer failure after successful keyboard, nonzero exit with
-keyboard left installed (partial).
-
-SSH policy: sequential single-purpose connections (see ``core.connection``).
-Password: ``--password`` → PAPERWRITER_PASSWORD → PAPERPOINTER_PASSWORD →
-MOVEWRITER_PASSWORD → ~/.paperwriter/config.json.
+Password: --password → PAPERHID_PASSWORD → legacy env aliases → saved config.
 """
 from __future__ import annotations
 
@@ -31,7 +22,6 @@ from core.status_merge import (
 )
 from core.ssh_client import SSHClient
 
-# Keyboard handlers live in keyboard_cli (PaperWriter pin surface).
 import keyboard_cli as kb
 
 
@@ -464,13 +454,12 @@ def build_parser() -> argparse.ArgumentParser:
     ug.add_argument("--pointer", action="store_true")
     ug.add_argument("--all", action="store_true")
 
-    # Keyboard (PaperWriter) surface
     isvc = sub.add_parser("install-service", help="Alias: install --keyboard")
     isvc.add_argument(
         "--wait",
         type=int,
         default=12,
-        help="BT controller wait seconds (compat with keyboard_cli)",
+        help="BT controller wait seconds",
     )
     sub.add_parser("uninstall-service", help="Alias: uninstall --keyboard")
     sp = sub.add_parser("ssh")

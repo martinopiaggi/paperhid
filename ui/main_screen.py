@@ -879,8 +879,8 @@ class MainScreen(ttk.Frame):
         body = self._make_section("native_app", "On-device App (Experimental)")
         self._label(
             body,
-            "Install PaperWriter on the tablet (XOVI/AppLoad). Manage pair, layout, "
-            "and the Bluetooth service from ☰ → AppLoad → PaperWriter — no computer "
+            "Install PaperHid on the tablet (XOVI/AppLoad). Manage pair, layout, "
+            "and the Bluetooth service from ☰ → AppLoad → PaperHid — no computer "
             "needed after install.",
         )
         self._label(
@@ -902,7 +902,7 @@ class MainScreen(ttk.Frame):
         if installed:
             if not messagebox.askyesno(
                 "Uninstall on-device app",
-                "Remove the on-device PaperWriter app and briefly restart the "
+                "Remove the on-device PaperHid app and briefly restart the "
                 "tablet interface. Bluetooth keyboard service is left alone. Continue?",
             ):
                 return
@@ -911,7 +911,7 @@ class MainScreen(ttk.Frame):
             if not messagebox.askyesno(
                 "Install on-device app",
                 "Installs XOVI/AppLoad pieces if needed, Python (entware), and "
-                "PaperWriter on the tablet.\n\n"
+                "PaperHid on the tablet.\n\n"
                 "Screen will flicker for 1–2 minutes.\n"
                 "Disable automatic OS updates.\n\nContinue?",
             ):
