@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared Paper Pro Bluetooth helpers for PaperWriter.
+# Shared Paper Pro Bluetooth helpers for PaperHid.
 # Sourced by bt-keyboard.sh and bt-resume.sh — not run directly.
 #
 # Rules (NXP IW61x / btnxpuart):

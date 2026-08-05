@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared helpers for fixed PaperPointer UI actions. Invoked only via absolute
+# Shared helpers for fixed PaperHid pointer UI actions. Invoked only via absolute
 # script paths from the QML CommandExecutor — never with free-form shell text.
 set -eu
 

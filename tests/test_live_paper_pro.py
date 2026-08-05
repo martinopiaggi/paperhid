@@ -1,10 +1,9 @@
 """Live integration tests against a USB-connected reMarkable Paper Pro.
 
 Requires:
-  PAPERWRITER_LIVE=1  (or MOVEWRITER_LIVE=1)
-  PAPERWRITER_PASSWORD (SSH root password from Developer Mode;
-                        MOVEWRITER_PASSWORD also accepted)
-  Device at PAPERWRITER_IP / MOVEWRITER_IP (default 10.11.99.1)
+  PAPERHID_LIVE=1  (legacy: PAPERWRITER_LIVE / MOVEWRITER_LIVE)
+  PAPERHID_PASSWORD (SSH root password; legacy aliases accepted)
+  Device at PAPERHID_IP (legacy PAPERWRITER_IP / MOVEWRITER_IP; default 10.11.99.1)
 
 Skip entirely when LIVE is not set, so CI/unit runs stay offline.
 """
@@ -13,20 +12,25 @@ import time
 import unittest
 
 LIVE = (
-    os.environ.get("PAPERWRITER_LIVE", "") == "1"
+    os.environ.get("PAPERHID_LIVE", "") == "1"
+    or os.environ.get("PAPERWRITER_LIVE", "") == "1"
     or os.environ.get("MOVEWRITER_LIVE", "") == "1"
 )
 # Empty string is valid when the tablet accepts blank USB SSH password.
-PASSWORD = os.environ.get(
-    "PAPERWRITER_PASSWORD",
-    os.environ.get("MOVEWRITER_PASSWORD", ""),
+PASSWORD = (
+    os.environ.get("PAPERHID_PASSWORD")
+    or os.environ.get("PAPERWRITER_PASSWORD")
+    or os.environ.get("MOVEWRITER_PASSWORD")
+    or ""
 )
 # When LIVE=1 and neither password env is set, still try empty password.
-_PASSWORD_ENV_SET = (
-    "PAPERWRITER_PASSWORD" in os.environ or "MOVEWRITER_PASSWORD" in os.environ
+_PASSWORD_ENV_SET = any(
+    k in os.environ
+    for k in ("PAPERHID_PASSWORD", "PAPERWRITER_PASSWORD", "MOVEWRITER_PASSWORD")
 )
 IP = (
-    os.environ.get("PAPERWRITER_IP")
+    os.environ.get("PAPERHID_IP")
+    or os.environ.get("PAPERWRITER_IP")
     or os.environ.get("MOVEWRITER_IP")
     or "10.11.99.1"
 )
@@ -34,7 +38,7 @@ IP = (
 
 @unittest.skipUnless(
     LIVE,
-    "set PAPERWRITER_LIVE=1 (optional PAPERWRITER_PASSWORD; blank USB root ok)",
+    "set PAPERHID_LIVE=1 (optional PAPERHID_PASSWORD; blank USB root ok)",
 )
 class TestLivePaperPro(unittest.TestCase):
     @classmethod

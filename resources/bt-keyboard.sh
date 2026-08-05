@@ -1,5 +1,5 @@
 #!/bin/sh
-# PaperWriter Bluetooth keyboard setup & monitor
+# PaperHid Bluetooth keyboard setup & monitor
 # /home/root/.paperwriter/bt-keyboard.sh — reMarkable Paper Pro (NXP btnxpuart)
 #
 # Critical Paper Pro rules:

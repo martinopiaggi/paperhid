@@ -199,18 +199,12 @@ class MainScreen(ttk.Frame):
 
         logo_frame = ttk.Frame(body, style="TFrame")
         logo_frame.pack(fill="x", padx=PAD_X, pady=(20, 4))
-        logo_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "images", "movewriter-logo.png"
-        )
-        if os.path.exists(logo_path):
-            from PIL import Image, ImageTk
-            img = Image.open(logo_path)
-            scale = 40 / img.height
-            img = img.resize((int(img.width * scale), 40), Image.LANCZOS)
-            self._logo_image = ImageTk.PhotoImage(img)
-            ttk.Label(logo_frame, image=self._logo_image, background=styles.BG).pack(
-                side="left"
-            )
+        ttk.Label(
+            logo_frame,
+            text="PaperHid",
+            style="Title.TLabel",
+            background=styles.BG,
+        ).pack(side="left")
 
         sep = ttk.Frame(self._scroll_body, height=1)
         sep.pack(fill="x", padx=PAD_X, pady=(8, 4))

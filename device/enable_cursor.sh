@@ -213,4 +213,4 @@ ARMED=0
 rm -f "$PING_LOG"
 trap - EXIT HUP INT TERM
 echo "OK: QML cursor ready (xochitl pid $XO)"
-echo "Recovery from host: python -m paperpointer.cli stock-ui"
+echo "Recovery from host: python cli.py pointer stock-ui"

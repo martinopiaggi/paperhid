@@ -1,6 +1,6 @@
 VERSION 3.28.0.164
 
-; Optional PaperPointer controls in Settings > Help. This is deliberately
+; Optional PaperHid pointer controls in Settings > Help. This is deliberately
 ; independent from MainView and the cursor FIFO patch. Every command and
 ; argument is fixed at parse time and routes through an allow-listed script.
 AFFECT /qml/device/view/settings/Help.qml
@@ -9,7 +9,7 @@ AFFECT /qml/device/view/settings/Help.qml
 
     ; Make this a real ColumnLayout child rather than an overlay in itemWrapper:
     ; the stock layout then reserves vertical space for the controls and support
-    ; text, so varying Help widgets cannot overlap the PaperPointer buttons.
+    ; text, so varying Help widgets cannot overlap the PaperHid buttons.
     TRAVERSE Background#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
         LOCATE BEFORE ArkControls.Body#supportText
         INSERT {
@@ -24,7 +24,7 @@ AFFECT /qml/device/view/settings/Help.qml
                 ArkControls.Body {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("PaperPointer")
+                    text: qsTr("PaperHid pointer")
                 }
 
                 ArkControls.Body {

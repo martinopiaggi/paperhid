@@ -1,5 +1,5 @@
 [Unit]
-Description=PaperWriter XOVI Autostart
+Description=PaperHid XOVI Autostart
 
 [Service]
 Type=oneshot

@@ -21,7 +21,7 @@ class CliError(Exception):
 
 
 def _resolve_password(args, cfg):
-    """CLI --password → PAPERWRITER_PASSWORD → compat envs → config."""
+    """CLI --password, PAPERHID_PASSWORD (legacy aliases), or config."""
     from core.credentials import resolve_password
 
     # Prefer monorepo resolver; fall back to cfg only when resolver empty
@@ -38,7 +38,7 @@ def _connect(args):
     password = _resolve_password(args, cfg)
     if not password:
         raise CliError(
-            "no password (use --password, PAPERWRITER_PASSWORD, or saved config)"
+            "no password (use --password, PAPERHID_PASSWORD, or saved config)"
         )
     ssh = SSHClient()
     ssh.connect(ip, password, timeout=args.timeout)

@@ -1,5 +1,5 @@
 [Unit]
-Description=PaperWriter BT unit re-seed from home (overlay recovery)
+Description=PaperHid BT unit re-seed from home (overlay recovery)
 DefaultDependencies=no
 After=local-fs.target
 Before=remarkable-bt-keyboard.service multi-user.target

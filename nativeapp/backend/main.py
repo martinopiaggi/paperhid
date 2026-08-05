@@ -1,4 +1,4 @@
-"""PaperWriter Native backend — message router and action dispatcher."""
+"""PaperHid on-device backend — message router and action dispatcher."""
 import logging
 import subprocess
 import sys

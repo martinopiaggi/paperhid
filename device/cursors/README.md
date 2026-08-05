@@ -24,4 +24,4 @@ If `win95.png` is missing or fails to load, the QML layer falls back to the cros
 
 ## License
 
-The shipped `win95.png` is an original simple arrow drawn for PaperPointer (public domain / CC0 intent), not a rip of Microsoft Windows cursors. Replace it with your own asset if you prefer.
+The shipped `win95.png` is an original simple arrow (public domain / CC0 intent), not a rip of Microsoft Windows cursors. Replace it with your own asset if you prefer.

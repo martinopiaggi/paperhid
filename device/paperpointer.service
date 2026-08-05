@@ -1,5 +1,5 @@
 [Unit]
-Description=PaperPointer mouse/touchpad to multitouch (Paper Pro)
+Description=PaperHid mouse/touchpad to multitouch (Paper Pro)
 After=remarkable-bt-keyboard.service bluetooth.service
 Wants=remarkable-bt-keyboard.service
 

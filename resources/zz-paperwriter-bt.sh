@@ -1,5 +1,5 @@
 #!/bin/sh
-# PaperWriter system-sleep hook — re-init BT keyboard after resume.
+# PaperHid system-sleep hook — re-init BT keyboard after resume.
 # Installed to /usr/lib/systemd/system-sleep/zz-paperwriter-bt.sh
 # Name sorts after stock sleep-wifi.sh so btnxpuart reload is already queued.
 #

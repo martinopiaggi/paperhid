@@ -1,5 +1,5 @@
 #!/bin/sh
-# PaperWriter post-resume Bluetooth re-init.
+# PaperHid post-resume Bluetooth re-init.
 # Invoked by zz-paperwriter-bt.sh after deep sleep / hibernate.
 #
 # Stock sleep-wifi.sh rmmod's btnxpuart on suspend and reloads it async on

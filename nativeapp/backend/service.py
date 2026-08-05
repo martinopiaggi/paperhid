@@ -1,4 +1,4 @@
-"""Service installer for PaperWriter Native (runs on-device)."""
+"""Service installer for PaperHid on-device app."""
 import os
 import subprocess
 from pathlib import Path

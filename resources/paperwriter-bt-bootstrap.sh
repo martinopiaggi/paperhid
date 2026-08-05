@@ -1,5 +1,5 @@
 #!/bin/sh
-# PaperWriter: re-seed systemd units + sleep hook from home after wipe.
+# PaperHid: re-seed systemd units + sleep hook from home after wipe.
 # Runs early (oneshot) so remarkable-bt-keyboard.service has a unit file again.
 #
 # Canonical copies live under /home/root/.paperwriter (survives reboot + OTA).

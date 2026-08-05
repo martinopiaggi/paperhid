@@ -1,5 +1,5 @@
 #!/bin/bash
-# PaperWriter XOVI autostart — runs on boot from paperwriter-xovi.service.
+# PaperHid XOVI autostart — runs on boot from paperwriter-xovi.service.
 #
 # Safe by design: no [Unit] deps. If /home never mounts, script exits silently
 # and stock xochitl keeps running.
@@ -31,7 +31,7 @@ log "autostart: found /home/root/xovi"
 ATTEMPTS=$(cat "$ATTEMPTS_FILE" 2>/dev/null)
 case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=0 ;; esac
 if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
-    log "autostart: XOVI activation failed ${ATTEMPTS}x — staying on stock (reinstall PaperWriter native app to retry)"
+    log "autostart: XOVI activation failed ${ATTEMPTS}x — staying on stock (reinstall PaperHid native app to retry)"
     exit 0
 fi
 echo $((ATTEMPTS + 1)) > "$ATTEMPTS_FILE" 2>/dev/null || true

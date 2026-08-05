@@ -1,4 +1,4 @@
-"""Config persistence for PaperWriter Native."""
+"""Config persistence for PaperHid on-device app."""
 import json
 from pathlib import Path
 

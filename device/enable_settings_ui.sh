@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the optional Settings > Help PaperPointer controls independently of
+# Install the optional Settings > Help PaperHid controls independently of
 # the cursor patch. Any failed canary restores the previous QMD and XOVI state.
 set -eu
 
@@ -79,7 +79,7 @@ rollback() {
     trap - EXIT HUP INT TERM
     set +e
     if [ "$ARMED" -eq 1 ]; then
-        echo "rolling back PaperPointer settings UI" >&2
+        echo "rolling back PaperHid settings UI" >&2
         rm -f "$QMD_TARGET"
         if [ "$HAD_QMD" -eq 1 ] && [ -f "$QMD_BACKUP" ]; then
             mv -f "$QMD_BACKUP" "$QMD_TARGET"
@@ -121,7 +121,7 @@ cp "$QMD_SOURCE" "$QMD_TMP"
 chmod 0644 "$QMD_TMP"
 mv -f "$QMD_TMP" "$QMD_TARGET"
 
-echo "starting XOVI with optional PaperPointer Settings > Help UI"
+echo "starting XOVI with optional PaperHid Settings > Help UI"
 start_xovi || fail 20 "XOVI start failed"
 wait_for_stable_xochitl 10 60 ||
     fail 21 "xochitl did not become stable with the required XOVI extensions"

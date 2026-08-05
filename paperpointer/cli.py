@@ -112,7 +112,7 @@ journalctl -u xochitl --no-pager -n 300 2>/dev/null | grep -iE 'paperpointer|com
 
 
 def cmd_bt_status(c) -> int:
-    """Collect read-only BlueZ, PaperWriter, and HID diagnostics."""
+    """Collect read-only BlueZ, PaperHid keyboard, and HID diagnostics."""
     script = """
 set +e
 echo '=== controllers ==='
@@ -127,10 +127,10 @@ echo '=== services ==='
 systemctl status bluetooth remarkable-bt-keyboard --no-pager -l 2>&1
 echo '=== processes ==='
 ps w | grep -E 'bluetoothd|btattach|btnxpuart|paperwriter|remarkable-bt' | grep -v grep
-echo '=== PaperWriter files ==='
+echo '=== PaperHid keyboard files (~/.paperwriter) ==='
 ls -la /home/root/.paperwriter /home/root/.paperwriter-keyboard 2>&1
 systemctl cat remarkable-bt-keyboard 2>&1
-echo '-- PaperWriter logs --'
+echo '-- PaperHid keyboard logs --'
 tail -n 120 /home/root/.paperwriter/bt.log 2>/dev/null
 tail -n 120 /home/root/.paperwriter/resume.log 2>/dev/null
 echo '-- resume helper --'
@@ -243,8 +243,8 @@ echo "ERROR: tablet Python missing — need /opt/bin/python3 (Entware)."
 echo "Pointer install will not upload until this is fixed."
 echo "Supported paths:"
 echo "  1) Install Entware for Paper Pro (rmpp-entware), then: opkg install python3"
-echo "  2) PaperHid/PaperWriter native-app path (installs Entware+Python as a side effect)"
-echo "  3) See README 'Tablet Python for pointer'"
+echo "  2) PaperHid native-app path (installs Entware+Python as a side effect)"
+echo "  3) See README"
 exit 2
 """
     out, err, code = run(c, script, timeout=30)
@@ -279,7 +279,7 @@ if [ ! -x /opt/bin/python3 ] && [ -x /home/root/.entware/bin/python3 ]; then
   mountpoint -q /opt || mount --bind /home/root/.entware /opt
 fi
 if [ ! -x /opt/bin/python3 ]; then
-  echo "ERROR: need /opt/bin/python3 (Entware). Install via PaperWriter native path or rmpp-entware."
+  echo "ERROR: need /opt/bin/python3 (Entware). Install via PaperHid native path or rmpp-entware."
   exit 2
 fi
 cp {REMOTE_HOME}/{UNIT_NAME} {UNIT_ETC}
@@ -727,7 +727,7 @@ expected = {SETTINGS_UI_READY!r}
 response = call_ui_broker("paperpointer.settings.ping", timeout=3.0)
 if response != expected:
     print(
-        "ERROR: Settings > Help has not loaded the PaperPointer UI "
+        "ERROR: Settings > Help has not loaded the PaperHid settings UI "
         f"(response={{response!r}})",
         file=sys.stderr,
     )
@@ -773,7 +773,7 @@ if [ -f {REMOTE_HOME}/pointer.conf ]; then
   fi
 fi
 if ! systemctl restart {UNIT_NAME}; then
-  echo 'WARNING: PaperPointer daemon did not restart; continuing UI recovery' >&2
+  echo 'WARNING: PaperHid pointer daemon did not restart; continuing UI recovery' >&2
   WARN=1
 fi
 rm -f "$QMD" "$SETTINGS_QMD" "$FIFO" || WARN=1
@@ -807,7 +807,7 @@ fi
 
 
 def cmd_reconnect(c) -> int:
-    """Kick PaperWriter-style reconnect for saved keyboard MAC(s)."""
+    """Kick PaperHid keyboard reconnect for saved MAC(s)."""
     script = r"""
 MAC=$(cat /home/root/.paperwriter-keyboard 2>/dev/null | tr -d ' \t\r\n')
 if [ -f /home/root/.paperwriter/bt-lib.sh ]; then
@@ -878,7 +878,7 @@ def shared_flag_parser(*, for_subparser: bool = False) -> argparse.ArgumentParse
     shared.add_argument(
         "--password",
         default=default,
-        help="SSH password (preferred env: PAPERWRITER_PASSWORD; also PAPERPOINTER_PASSWORD)",
+        help="SSH password (PAPERHID_PASSWORD; legacy PAPERWRITER_/PAPERPOINTER_ also accepted)",
     )
     return shared
 
@@ -973,7 +973,7 @@ def build_parser() -> argparse.ArgumentParser:
     parent_shared = shared_flag_parser(for_subparser=False)
     p = argparse.ArgumentParser(
         prog="paperpointer",
-        description="PaperHid pointer (mouse/touchpad → touch)",
+        description="PaperHid pointer (mouse/touchpad -> touch)",
         parents=[parent_shared],
     )
     p.set_defaults(host=DEFAULT_HOST, password=None)

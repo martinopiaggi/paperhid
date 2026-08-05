@@ -1,5 +1,5 @@
 [Unit]
-Description=Enable Bluetooth Keyboard Support (PaperWriter)
+Description=PaperHid Bluetooth keyboard support
 # Do not hard-require bluetooth.service — on Paper Pro the controller only
 # appears after btnxpuart loads; this unit loads the module then starts bluez.
 After=network-online.target
