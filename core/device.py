@@ -2,7 +2,6 @@
 
 PaperHid targets the reMarkable Paper Pro (codename Ferrari). Detection also
 recognizes Move. Keyboard language patches the keymap in libepaper.so.
-On-device native app (XOVI/AppLoad) is supported on Paper Pro and Move.
 """
 from __future__ import annotations
 
@@ -39,7 +38,6 @@ def detect(ssh, timeout=8):
       raw_model: concatenated model strings from the device
       supports_bt_keyboard_service: True when btnxpuart stack is expected
       supports_layout_patch: True for Move and Paper Pro (libepaper.so keymap)
-      supports_native_app: True only for Move-oriented XOVI/AppLoad path
     """
     info = {
         "model": MODEL_UNKNOWN,
@@ -51,7 +49,6 @@ def detect(ssh, timeout=8):
         # Default: try the service; hardware differs. RM1/RM2 lack BT and fail soft.
         "supports_bt_keyboard_service": True,
         "supports_layout_patch": False,
-        "supports_native_app": False,
     }
 
     try:
@@ -83,8 +80,6 @@ def detect(ssh, timeout=8):
     info["model"] = model
     info["label"] = _label_for(model, info["raw_model"])
     info["supports_layout_patch"] = model in (MODEL_MOVE, MODEL_PAPER_PRO)
-    # XOVI/AppLoad are supported on Paper Pro (primary AppLoad target) and Move.
-    info["supports_native_app"] = model in (MODEL_MOVE, MODEL_PAPER_PRO)
     return info
 
 

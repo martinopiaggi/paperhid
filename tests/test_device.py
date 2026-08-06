@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 from core import device as device_mod
 from core import layout_patcher
-from core import native_app_installer
 
 
 class FakeSSH:
@@ -59,7 +58,6 @@ class TestDeviceDetect(unittest.TestCase):
         self.assertEqual(info["model"], device_mod.MODEL_PAPER_PRO)
         self.assertIn("Paper Pro", info["label"])
         self.assertTrue(info["supports_layout_patch"])
-        self.assertTrue(info["supports_native_app"])
         self.assertTrue(info["supports_bt_keyboard_service"])
         self.assertIn("3.28", info.get("img_version", ""))
         self.assertTrue(device_mod.is_paper_pro(info))
@@ -71,7 +69,6 @@ class TestDeviceDetect(unittest.TestCase):
         self.assertEqual(info["model"], device_mod.MODEL_MOVE)
         self.assertEqual(info["label"], "reMarkable Move")
         self.assertTrue(info["supports_layout_patch"])
-        self.assertTrue(info["supports_native_app"])
         self.assertTrue(device_mod.is_move(info))
 
     def test_detect_hostname_ferrari_only(self):
@@ -88,7 +85,6 @@ class TestDeviceDetect(unittest.TestCase):
         info = device_mod.detect(BoomSSH())
         self.assertEqual(info["model"], device_mod.MODEL_UNKNOWN)
         self.assertFalse(info["supports_layout_patch"])
-        self.assertFalse(info["supports_native_app"])
 
     def test_classify_move_requires_remarkable_with_move(self):
         # "move" alone must not match random blobs
@@ -266,31 +262,6 @@ class TestLayoutGate(unittest.TestCase):
         apostrophe = [p for p in punct if p[0] == 40]
         self.assertEqual(len(apostrophe), 1)
         self.assertEqual(apostrophe[0][2], Key_Dead_Acute)
-
-
-class TestNativeAppGate(unittest.TestCase):
-    def test_supports_device_true_on_paper_pro(self):
-        ssh = FakeSSH(default=(PAPER_PRO_DETECT_OUT, "", 0))
-        self.assertTrue(native_app_installer.supports_device(ssh))
-
-    def test_supports_device_true_on_move(self):
-        ssh = FakeSSH(default=(MOVE_DETECT_OUT, "", 0))
-        self.assertTrue(native_app_installer.supports_device(ssh))
-
-    def test_install_refused_on_unknown(self):
-        out = "unknown board\nhostname\nLinux x\n"
-        ssh = FakeSSH(default=(out, "", 0))
-        self.assertFalse(native_app_installer.supports_device(ssh))
-        with self.assertRaises(RuntimeError) as ctx:
-            native_app_installer.install(ssh)
-        self.assertIn("Paper Pro", str(ctx.exception))
-
-    def test_native_app_paths_are_paperwriter(self):
-        self.assertIn("paperwriter", native_app_installer.DEST_DIR)
-        self.assertIn("paperwriter-xovi", native_app_installer.AUTOSTART_SERVICE_PATH)
-        root = native_app_installer.native_app_root()
-        self.assertTrue(os.path.isdir(root))
-        self.assertTrue(os.path.isfile(os.path.join(root, "manifest.json")))
 
 
 class TestServiceResourcesPresent(unittest.TestCase):

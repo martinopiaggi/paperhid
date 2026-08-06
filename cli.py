@@ -231,56 +231,6 @@ def _install_mode(args) -> str:
     raise CliError("install/uninstall requires one of --keyboard, --pointer, --all")
 
 
-def cmd_install_native_app(args) -> int:
-    """Install optional AppLoad on-device app (until Settings has full parity)."""
-    from core import native_app_installer
-
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    ssh = None
-    try:
-        ssh, host, password = open_keyboard_ssh(host=host, password=password)
-        _maybe_save_password(args, host, password)
-        print("=== install native app (XOVI/AppLoad → PaperHid) ===")
-        native_app_installer.install(ssh, status_cb=print)
-        print("OK: open tablet ☰ → AppLoad → PaperHid")
-        return 0
-    except Exception as e:
-        print(f"install-native-app error: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if ssh is not None:
-            try:
-                ssh.disconnect()
-            except Exception:
-                pass
-
-
-def cmd_uninstall_native_app(args) -> int:
-    """Remove optional AppLoad on-device app package."""
-    from core import native_app_installer
-
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    ssh = None
-    try:
-        ssh, host, password = open_keyboard_ssh(host=host, password=password)
-        _maybe_save_password(args, host, password)
-        print("=== uninstall native app ===")
-        native_app_installer.uninstall(ssh, status_cb=print)
-        print("OK: native app removed")
-        return 0
-    except Exception as e:
-        print(f"uninstall-native-app error: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if ssh is not None:
-            try:
-                ssh.disconnect()
-            except Exception:
-                pass
-
-
 def cmd_set_layout(args) -> int:
     """Apply a keyboard language layout (libepaper patch on Paper Pro / Move)."""
     from core import layout_patcher
@@ -668,7 +618,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("unpair", parents=[child_shared])
     sp.add_argument("--mac", default=None)
     sub.add_parser("refuse-layout", parents=[child_shared])
-    sub.add_parser("refuse-native", parents=[child_shared])
     sp = sub.add_parser(
         "set-layout",
         parents=[child_shared],
@@ -678,16 +627,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--layout",
         required=True,
         help="Layout key (it, us, de, …) or display name (Italian, …)",
-    )
-    sub.add_parser(
-        "install-native-app",
-        parents=[child_shared],
-        help="Install optional AppLoad on-device UI (XOVI/AppLoad)",
-    )
-    sub.add_parser(
-        "uninstall-native-app",
-        parents=[child_shared],
-        help="Remove optional AppLoad on-device UI",
     )
     sp = sub.add_parser("diagnose", parents=[child_shared])
     sp.add_argument("--probe-scan", action="store_true")
@@ -726,10 +665,7 @@ def main(argv=None) -> int:
         "save-mac": lambda a: kb.cmd_save_mac(_kb_args_view(a)),
         "unpair": lambda a: kb.cmd_unpair(_kb_args_view(a)),
         "refuse-layout": lambda a: kb.cmd_refuse_layout(_kb_args_view(a)),
-        "refuse-native": lambda a: kb.cmd_refuse_native(_kb_args_view(a)),
         "set-layout": cmd_set_layout,
-        "install-native-app": cmd_install_native_app,
-        "uninstall-native-app": cmd_uninstall_native_app,
         "diagnose": lambda a: kb.cmd_diagnose(_kb_args_view(a)),
         "pointer": cmd_pointer,
     }

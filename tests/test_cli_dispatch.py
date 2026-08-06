@@ -272,27 +272,27 @@ class TestRootPointerDispatchCleanup(unittest.TestCase):
 
 
 class TestPhase4HostSurface(unittest.TestCase):
-    """Desktop GUI removed; layout + native-app install via unified CLI."""
+    """Desktop GUI and AppLoad removed; layout via unified CLI + Settings."""
 
-    def test_desktop_gui_entry_removed(self):
+    def test_desktop_gui_and_nativeapp_removed(self):
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1]
         self.assertFalse((root / "main.py").exists())
         self.assertFalse((root / "ui").is_dir())
+        self.assertFalse((root / "nativeapp").is_dir())
+        self.assertFalse((root / "core" / "native_app_installer.py").is_file())
 
-    def test_parser_has_layout_and_native_app(self):
+    def test_parser_has_layout_not_native_app(self):
         import cli as root_cli
 
         p = root_cli.build_parser()
         actions = [a for a in p._subparsers._group_actions if a.dest == "command"]
         choices = set(actions[0].choices.keys())
-        for name in (
-            "set-layout",
-            "install-native-app",
-            "uninstall-native-app",
-        ):
-            self.assertIn(name, choices)
+        self.assertIn("set-layout", choices)
+        self.assertNotIn("install-native-app", choices)
+        self.assertNotIn("uninstall-native-app", choices)
+        self.assertNotIn("refuse-native", choices)
 
     def test_set_layout_resolves_display_and_key(self):
         import cli as root_cli
@@ -318,26 +318,6 @@ class TestPhase4HostSurface(unittest.TestCase):
             code = root_cli.cmd_set_layout(args)
         self.assertEqual(code, 2)
         open_ssh.assert_not_called()
-
-    def test_install_native_app_routes(self):
-        import cli as root_cli
-        import argparse
-
-        ssh = MagicMock()
-        args = argparse.Namespace(
-            host="10.11.99.1",
-            ip=None,
-            password="pw",
-            save_password=False,
-        )
-        with patch.object(
-            root_cli, "open_keyboard_ssh", return_value=(ssh, "10.11.99.1", "pw")
-        ):
-            with patch("core.native_app_installer.install") as inst:
-                code = root_cli.cmd_install_native_app(args)
-        self.assertEqual(code, 0)
-        inst.assert_called_once()
-        ssh.disconnect.assert_called_once()
 
 
 class TestUnifiedCliEntry(unittest.TestCase):
@@ -814,7 +794,7 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
         return ssh
 
     def test_opkg_usable_requires_version_exit_zero(self):
-        from core import native_app_installer as nai
+        from core import tablet_python as tp
 
         # Binary present but --version fails → not usable
         def results(cmd):
@@ -824,17 +804,17 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
                 return "", "segfault", 1
             return "", "", 1
 
-        self.assertFalse(nai._opkg_usable(self._ssh(results)))
+        self.assertFalse(tp._opkg_usable(self._ssh(results)))
 
         def ok(cmd):
             if "opkg --version" in cmd:
                 return "opkg version 1.0", "", 0
             return "", "", 0
 
-        self.assertTrue(nai._opkg_usable(self._ssh(ok)))
+        self.assertTrue(tp._opkg_usable(self._ssh(ok)))
 
     def test_tablet_python_usable_requires_exec(self):
-        from core import native_app_installer as nai
+        from core import tablet_python as tp
 
         def broken(cmd):
             if "mount" in cmd:
@@ -843,17 +823,17 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
                 return "", "ImportError", 1
             return "", "", 1
 
-        self.assertFalse(nai._tablet_python_usable(self._ssh(broken)))
+        self.assertFalse(tp._tablet_python_usable(self._ssh(broken)))
 
         def ok(cmd):
             if "python3 -c" in cmd:
                 return "3", "", 0
             return "", "", 0
 
-        self.assertTrue(nai._tablet_python_usable(self._ssh(ok)))
+        self.assertTrue(tp._tablet_python_usable(self._ssh(ok)))
 
     def test_ensure_entware_cleans_partial_debris_before_reinstall(self):
-        from core import native_app_installer as nai
+        from core import tablet_python as tp
 
         calls = []
 
@@ -873,14 +853,14 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
 
         ssh = self._ssh(results)
         with self.assertRaises(RuntimeError) as ctx:
-            nai._ensure_entware(ssh, say=lambda m: None)
+            tp._ensure_entware(ssh, say=lambda m: None)
         self.assertIn("entware install failed", str(ctx.exception))
         # Must have attempted cleanup of partial tree (before and/or after fail)
         cleaned = [c for c in calls if "rm -rf /home/root/.entware" in c]
         self.assertTrue(cleaned, "expected partial Entware cleanup")
 
     def test_ensure_entware_skips_install_when_opkg_usable(self):
-        from core import native_app_installer as nai
+        from core import tablet_python as tp
 
         def results(cmd):
             if "opkg --version" in cmd:
@@ -888,16 +868,14 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
             return "", "", 0
 
         ssh = self._ssh(results)
-        nai._ensure_entware(ssh, say=lambda m: None)
-        wget_calls = [c for c, in ((call.args[0],) for call in ssh.exec.call_args_list)
-                      if "rmpp_entware" in c and "wget" in c]
+        tp._ensure_entware(ssh, say=lambda m: None)
         # Simpler: no wget
         all_cmds = [call.args[0] for call in ssh.exec.call_args_list]
         self.assertFalse(any("wget" in c and "rmpp_entware" in c for c in all_cmds))
 
     def test_ensure_python3_does_not_accept_non_opt_python(self):
         """command -v python3 alone must not short-circuit Entware python."""
-        from core import native_app_installer as nai
+        from core import tablet_python as tp
 
         state = {"n": 0}
 
@@ -912,7 +890,7 @@ class TestEntwareBootstrapUsability(unittest.TestCase):
 
         ssh = self._ssh(results)
         with self.assertRaises(RuntimeError) as ctx:
-            nai._ensure_python3(ssh, say=lambda m: None)
+            tp._ensure_python3(ssh, say=lambda m: None)
         self.assertIn("Python 3 install failed", str(ctx.exception))
         self.assertGreaterEqual(state["n"], 1)
 

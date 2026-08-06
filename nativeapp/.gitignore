@@ -1,6 +1,0 @@
-__pycache__/
-*.pyc
-.DS_Store
-
-# resources.rcc is intentionally tracked — Windows builds and public source
-# users don't have Qt's rcc available to rebuild it locally.

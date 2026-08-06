@@ -1,8 +1,0 @@
-{
-  "name": "PaperHid",
-  "id": "paperwriter",
-  "version": "2.1.0",
-  "loadsBackend": true,
-  "entry": "/qml/main.qml",
-  "supportsScaling": true
-}

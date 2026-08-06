@@ -11,4 +11,6 @@ python cli.py pointer disable-settings-ui # remove Settings panel only
 
 Clicks always use multitouch injection; the cursor is visual only (QML overlay). Settings → Help is independent of the cursor: re-enabling the cursor does not delete Settings.
 
+**Settings → Help** (after `enable-settings-ui`): status, Bluetooth, keyboard reconnect, language layout (US/UK/DE/FR/IT/ES), pointer knobs. Pairing stays on the host CLI (`scan` / `pair`).
+
 **Save work first** — xochitl restarts.

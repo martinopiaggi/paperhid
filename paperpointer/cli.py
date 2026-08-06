@@ -451,7 +451,7 @@ class _ParamikoExec:
 
 def bootstrap_tablet_python(c, status_cb=None) -> None:
     """Install Entware + Python 3 over an open Paramiko session."""
-    from core.native_app_installer import ensure_tablet_python
+    from core.tablet_python import ensure_tablet_python
 
     ensure_tablet_python(_ParamikoExec(c), status_cb=status_cb)
 
@@ -721,6 +721,31 @@ def cmd_enable_cursor(c) -> int:
     return code
 
 
+def _put_settings_layout_runtime(c, paperhid_home: str) -> None:
+    """Ship on-device set_layout.py + shared/tools packages under .paperhid/py."""
+    set_layout = DEVICE_DIR / "set_layout.py"
+    if set_layout.is_file():
+        put_file_atomic(c, set_layout, f"{paperhid_home}/set_layout.py", 0o755)
+    py_root = f"{paperhid_home}/py"
+    run(c, f"mkdir -p {py_root}/shared {py_root}/tools")
+    shared_dir = ROOT / "shared"
+    tools_dir = ROOT / "tools"
+    for name in (
+        "__init__.py",
+        "constants.py",
+        "transport.py",
+        "layout_patcher.py",
+        "layouts.py",
+    ):
+        path = shared_dir / name
+        if path.is_file():
+            put_file_atomic(c, path, f"{py_root}/shared/{name}", 0o644)
+    for name in ("__init__.py", "generate_qmap.py"):
+        path = tools_dir / name
+        if path.is_file():
+            put_file_atomic(c, path, f"{py_root}/tools/{name}", 0o644)
+
+
 def cmd_enable_settings_ui(c) -> int:
     """Install and canary the optional Settings > Help controls."""
     qmd = DEVICE_DIR / "paperpointer-settings.qmd"
@@ -737,6 +762,7 @@ def cmd_enable_settings_ui(c) -> int:
     put_file_atomic(c, qmd, f"{REMOTE_HOME}/paperpointer-settings.qmd", 0o644)
     put_file_atomic(c, installer, f"{REMOTE_HOME}/enable_settings_ui.sh", 0o755)
     put_file_atomic(c, ui_bin, f"{paperhid_home}/paperhid-ui", 0o755)
+    _put_settings_layout_runtime(c, paperhid_home)
     # Legacy thin wrappers still used by host CLI cursor-style path.
     if ui_actions.is_dir():
         for path in ui_actions.iterdir():
@@ -749,8 +775,10 @@ def cmd_enable_settings_ui(c) -> int:
 
     out, err, code = run(
         c,
-        f"sed -i 's/\\r$//' {paperhid_home}/paperhid-ui {REMOTE_HOME}/enable_settings_ui.sh; "
-        f"chmod 755 {paperhid_home}/paperhid-ui {REMOTE_HOME}/enable_settings_ui.sh; "
+        f"sed -i 's/\\r$//' {paperhid_home}/paperhid-ui {paperhid_home}/set_layout.py "
+        f"{REMOTE_HOME}/enable_settings_ui.sh 2>/dev/null; "
+        f"chmod 755 {paperhid_home}/paperhid-ui {paperhid_home}/set_layout.py "
+        f"{REMOTE_HOME}/enable_settings_ui.sh; "
         f"{REMOTE_HOME}/enable_settings_ui.sh",
         timeout=120,
     )

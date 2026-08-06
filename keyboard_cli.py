@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 
 from core.ssh_client import SSHClient
-from core import config, service_installer, bluetooth, layout_patcher, native_app_installer
+from core import config, service_installer, bluetooth, layout_patcher
 from core import device as device_mod
 
 
@@ -60,8 +60,7 @@ def cmd_detect(args):
         info = device_mod.detect(ssh)
         for k in (
             "model", "label", "hostname", "img_version", "kernel",
-            "supports_bt_keyboard_service", "supports_layout_patch",
-            "supports_native_app", "raw_model",
+            "supports_bt_keyboard_service", "supports_layout_patch", "raw_model",
         ):
             print(f"{k}: {info.get(k, '')}")
         return 0
@@ -227,18 +226,6 @@ def cmd_refuse_layout(args):
         off, count = found
         print(f"keymap_ok: offset=0x{off:x} entries={count} size={len(data)}")
         return 0
-    return _with_ssh(args, run)
-
-
-def cmd_refuse_native(args):
-    def run(ssh, cfg, ip):
-        try:
-            native_app_installer.install(ssh)
-            print("error: native install was allowed", file=sys.stderr)
-            return 1
-        except RuntimeError as e:
-            print(f"refused_ok: {e}")
-            return 0
     return _with_ssh(args, run)
 
 

@@ -100,9 +100,18 @@ class TestPaperhidUiShipped(unittest.TestCase):
             "Bluetooth",
             "Paired devices",
             "Keyboard",
+            "Language layout",
             "Pointer and cursor",
         ):
             self.assertIn(f'qsTr("{label}")', text)
+        self.assertIn('arguments: ["set-layout", "it"]', text)
+        self.assertIn('arguments: ["set-layout", "us"]', text)
+
+    def test_set_layout_command_allowlist(self):
+        text = UI.read_text(encoding="utf-8")
+        self.assertIn("set-layout", text)
+        self.assertIn("cmd_set_layout", text)
+        self.assertIn("set_layout.py", text)
 
     def test_settings_installer_requires_paperhid_ui_not_pointer_service(self):
         text = SETTINGS_INSTALLER.read_text(encoding="utf-8")

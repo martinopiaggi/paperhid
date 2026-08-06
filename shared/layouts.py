@@ -1,6 +1,6 @@
-"""Single keyboard-layout registry (display name → qmap key).
+"""Single keyboard-layout registry (display name → layout key).
 
-Used by the desktop UI and the on-device native app backend.
+Used by the host CLI and the on-device Settings helper.
 """
 from __future__ import annotations
 

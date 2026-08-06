@@ -107,14 +107,11 @@ class TestLivePaperPro(unittest.TestCase):
         # unpair path must not crash for unknown MAC
         bluetooth.remove(self.ssh, fake)
 
-    def test_05_native_refused_layout_supported(self):
+    def test_05_layout_supported(self):
         from core import device as device_mod
-        from core import native_app_installer
 
         info = device_mod.detect(self.ssh)
         self.assertTrue(info.get("supports_layout_patch"))
-        with self.assertRaises(RuntimeError):
-            native_app_installer.install(self.ssh)
 
     def test_06_libepaper_layout_discover_and_italian(self):
         """Discover keymap, apply Italian, verify [ → è / Shift+[ → é.

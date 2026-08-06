@@ -218,14 +218,20 @@ cmd_status() {
     pointer_installed=false
     [ -f "$HOME_PP/paperpointerd.py" ] && pointer_installed=true
 
+    layout_key=""
+    if [ -f /home/root/.paperwriter-layout ]; then
+        layout_key=$(tr -d ' \t\r\n' </home/root/.paperwriter-layout | cut -c1-16)
+    fi
+    layout_j=$(json_escape "$layout_key")
+
     last_err=""
     if [ -f "$ERR_FILE" ]; then
-        last_err=$(head -n 1 "$ERR_FILE" 2>/dev/null || true)
+        last_err=$(sed -n '1p' "$ERR_FILE" 2>/dev/null || true)
     fi
     last_err_j=$(json_escape "$last_err")
 
     # Compact single-line JSON so QML chunk accumulation always yields one object.
-    printf '%s\n' "{\"ok\":true,\"adapter\":{\"present\":${adapter_present},\"powered\":${powered},\"pairable\":${pairable},\"discovering\":${discovering}},\"services\":{\"bluetooth\":\"${bt_svc}\",\"keyboard\":\"${kb_svc}\",\"pointer\":\"${ptr_svc}\"},\"keyboard\":{\"saved_mac\":\"${saved_mac_j}\"},\"paired\":${paired_json},\"input_nodes\":${nodes_json},\"pointer\":{\"installed\":${pointer_installed},\"service\":\"${ptr_svc}\",\"cursor\":${cursor},\"cursor_hide_ms\":${hide},\"accel\":${accel},\"cursor_style\":\"$(json_escape "$style")\"},\"last_error\":\"${last_err_j}\"}"
+    printf '%s\n' "{\"ok\":true,\"adapter\":{\"present\":${adapter_present},\"powered\":${powered},\"pairable\":${pairable},\"discovering\":${discovering}},\"services\":{\"bluetooth\":\"${bt_svc}\",\"keyboard\":\"${kb_svc}\",\"pointer\":\"${ptr_svc}\"},\"keyboard\":{\"saved_mac\":\"${saved_mac_j}\",\"layout\":\"${layout_j}\"},\"paired\":${paired_json},\"input_nodes\":${nodes_json},\"pointer\":{\"installed\":${pointer_installed},\"service\":\"${ptr_svc}\",\"cursor\":${cursor},\"cursor_hide_ms\":${hide},\"accel\":${accel},\"cursor_style\":\"$(json_escape "$style")\"},\"last_error\":\"${last_err_j}\"}"
 }
 
 # --- Bluetooth (reconnect service order matters) ---
@@ -418,11 +424,48 @@ cmd_set_hide_ms() {
     printf '%s\n' "{\"ok\":true,\"action\":\"set-hide-ms\",\"hide_ms\":${val}}"
 }
 
+cmd_set_layout() {
+    val="${1:-}"
+    case "$val" in
+        us|us_intl|uk|de|fr|fr_ca|es|it|pt|br|nl|sv|no|dk|fi|is|de_ch|fr_ch|be|ru|ua|cz|hu|tr|gr|he) ;;
+        *)
+            set_error "invalid layout"
+            printf '%s\n' '{"ok":false,"error":"invalid layout"}'
+            return 2
+            ;;
+    esac
+    clear_error
+    if [ ! -x /opt/bin/python3 ]; then
+        set_error "tablet python required for layout"
+        printf '%s\n' '{"ok":false,"error":"tablet python required for layout"}'
+        return 16
+    fi
+    if [ ! -f "$HOME_PH/set_layout.py" ]; then
+        set_error "set_layout.py missing"
+        printf '%s\n' '{"ok":false,"error":"set_layout.py missing"}'
+        return 16
+    fi
+    # Layout patch restarts xochitl; capture JSON from the helper.
+    out=$(/opt/bin/python3 "$HOME_PH/set_layout.py" "$val" 2>"$HOME_PH/set-layout.err") || {
+        err=$(sed -n '1p' "$HOME_PH/set-layout.err" 2>/dev/null || true)
+        set_error "layout failed: ${err:-unknown}"
+        if [ -n "$out" ]; then
+            printf '%s\n' "$out"
+        else
+            printf '%s\n' '{"ok":false,"error":"layout failed"}'
+        fi
+        return 1
+    }
+    log "set-layout $val"
+    printf '%s\n' "$out"
+}
+
 usage() {
     echo "Usage: paperhid-ui <command> [arg]" >&2
     echo "  status | bluetooth-on | bluetooth-off | bluetooth-restart" >&2
     echo "  keyboard-enable | keyboard-disable | keyboard-reconnect" >&2
     echo "  pointer-restart | set-accel <v> | set-cursor-style <s> | set-hide-ms <ms>" >&2
+    echo "  set-layout <key>" >&2
     exit 2
 }
 
@@ -463,6 +506,9 @@ case "$cmd" in
         ;;
     set-hide-ms)
         with_lock cmd_set_hide_ms "${1:-}"
+        ;;
+    set-layout)
+        with_lock cmd_set_layout "${1:-}"
         ;;
     *)
         usage

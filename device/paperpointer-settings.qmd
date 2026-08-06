@@ -18,6 +18,7 @@ AFFECT /qml/device/view/settings/Help.qml
                 property string actionStatus: qsTr("Ready")
                 property string statusBuf: ""
                 property string pairedSummary: qsTr("Paired devices: (refresh)")
+                property string layoutSummary: qsTr("Layout: (refresh)")
                 property string pointerSummary: qsTr("Pointer: (refresh)")
                 property bool pointerInstalled: false
                 property bool mutationBusy: false
@@ -51,6 +52,10 @@ AFFECT /qml/device/view/settings/Help.qml
                             lines.push(qsTr("Saved keyboard: %1").arg(kb.saved_mac));
                         else
                             lines.push(qsTr("Saved keyboard: (none)"));
+                        if (kb.layout)
+                            layoutSummary = qsTr("Layout: %1").arg(kb.layout);
+                        else
+                            layoutSummary = qsTr("Layout: (stock / unknown)");
                         if (j.last_error)
                             lines.push(qsTr("Last error: %1").arg(j.last_error));
                         actionStatus = lines.join("\n");
@@ -238,6 +243,113 @@ AFFECT /qml/device/view/settings/Help.qml
                             paperPointerSettingsRoot.actionStatus = qsTr("Keyboard reconnect...");
                             paperHidKbReconnect.outBuf = "";
                             paperHidKbReconnect.startCommand(100);
+                        }
+                    }
+                }
+
+                // --- Language layout (libepaper; restarts xochitl) ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Language layout")
+                }
+
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: paperPointerSettingsRoot.layoutSummary
+                }
+
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Applies a keymap patch and restarts xochitl. Host CLI: set-layout --layout <key> for all keys.")
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("US")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout US...");
+                            paperHidLayoutUs.outBuf = "";
+                            paperHidLayoutUs.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("UK")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout UK...");
+                            paperHidLayoutUk.outBuf = "";
+                            paperHidLayoutUk.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("DE")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout DE...");
+                            paperHidLayoutDe.outBuf = "";
+                            paperHidLayoutDe.startCommand(100);
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("FR")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout FR...");
+                            paperHidLayoutFr.outBuf = "";
+                            paperHidLayoutFr.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("IT")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout IT...");
+                            paperHidLayoutIt.outBuf = "";
+                            paperHidLayoutIt.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("ES")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Layout ES...");
+                            paperHidLayoutEs.outBuf = "";
+                            paperHidLayoutEs.startCommand(100);
                         }
                     }
                 }
@@ -451,6 +563,108 @@ AFFECT /qml/device/view/settings/Help.qml
                     id: paperHidKbReconnect
                     command: "/home/root/.paperhid/paperhid-ui"
                     arguments: ["keyboard-reconnect"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutUs
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "us"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutUk
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "uk"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutDe
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "de"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutFr
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "fr"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutIt
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "it"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidLayoutEs
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-layout", "es"]
                     property string outBuf: ""
                     property bool launched: false
                     onStdOutAvailable: function(output) { outBuf += output; }
