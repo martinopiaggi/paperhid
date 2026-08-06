@@ -392,6 +392,7 @@ def cmd_status(args) -> int:
         unit_file_present=False,
         is_active=None,
     )
+    settings_lines: list[str] | None = None
     c = None
     try:
         c, _, _ = open_pointer_paramiko(host=host, password=password)
@@ -425,6 +426,8 @@ def cmd_status(args) -> int:
             pointer.detail = (
                 pointer.detail + f" | raw={';'.join(facts['raw_lines'])[:200]}"
             )
+        # Settings → Help health (XOVI tether). Hint repair path when broken.
+        settings_lines = _probe_settings_ui(run, c)
     except Exception as e:
         pointer = ComponentStatus(
             state="unknown",
@@ -432,6 +435,7 @@ def cmd_status(args) -> int:
             exit_code=1,
             label="pointer",
         )
+        settings_lines = [f"error: {e}"]
     finally:
         if c is not None:
             try:
@@ -442,7 +446,96 @@ def cmd_status(args) -> int:
     sys.stdout.write(
         format_status_report(keyboard_lines, pointer, keyboard=keyboard)
     )
+    if settings_lines is not None:
+        sys.stdout.write("=== settings_ui ===\n")
+        for ln in settings_lines:
+            sys.stdout.write(f"{ln}\n")
     return merge_exit_codes(keyboard, pointer)
+
+
+def _probe_settings_ui(run, c) -> list[str]:
+    """Return human lines for Settings → Help / XOVI state."""
+    out, _, _ = run(
+        c,
+        "set +e; "
+        "QMD=/home/root/xovi/exthome/qt-resource-rebuilder/paperpointer-settings.qmd; "
+        "SRC=/home/root/.paperpointer/paperpointer-settings.qmd; "
+        "test -f \"$QMD\" && echo QMD_ACTIVE=yes || echo QMD_ACTIVE=no; "
+        "test -f \"$SRC\" && echo QMD_STAGED=yes || echo QMD_STAGED=no; "
+        "test -x /home/root/xovi/start && echo XOVI_START=yes || echo XOVI_START=no; "
+        "test -p /run/xovi-mb && echo XOVI_MB=yes || echo XOVI_MB=no; "
+        "pidof xochitl >/dev/null && echo XOCHITL=yes || echo XOCHITL=no",
+        timeout=15,
+    )
+    flags = {}
+    for ln in (out or "").splitlines():
+        if "=" in ln:
+            k, v = ln.strip().split("=", 1)
+            flags[k] = v
+    lines = [
+        f"qmd_active: {flags.get('QMD_ACTIVE', '?')}",
+        f"qmd_staged: {flags.get('QMD_STAGED', '?')}",
+        f"xovi_start: {flags.get('XOVI_START', '?')}",
+        f"xovi_broker: {flags.get('XOVI_MB', '?')}",
+        f"xochitl: {flags.get('XOCHITL', '?')}",
+    ]
+    active = flags.get("QMD_ACTIVE") == "yes"
+    broker = flags.get("XOVI_MB") == "yes"
+    staged = flags.get("QMD_STAGED") == "yes"
+    if active and broker:
+        lines.append("state: ok")
+        lines.append("detail: Settings → Help should show PaperHid (open Help once if unsure)")
+    elif staged or active:
+        lines.append("state: needs_repair")
+        lines.append(
+            "detail: PaperHid Help files present but XOVI not tethered "
+            "(Help looks stock / empty)"
+        )
+        lines.append("fix: python cli.py repair-ui")
+    elif flags.get("XOVI_START") == "yes":
+        lines.append("state: not_installed")
+        lines.append("detail: XOVI present; Settings panel not installed yet")
+        lines.append("fix: python cli.py repair-ui")
+    else:
+        lines.append("state: not_installed")
+        lines.append(
+            "detail: optional Settings UI not installed "
+            "(firmware 3.28.0.164 + XOVI required)"
+        )
+    return lines
+
+
+def cmd_repair_ui(args) -> int:
+    """Reinstall Settings → Help and re-tether XOVI (average-user recovery)."""
+    host = _host_from_args(args)
+    password = _password_from_args(args)
+    print("=== repair Settings → Help UI ===")
+    print(
+        "Reinstalls the PaperHid Help panel and starts XOVI "
+        "(safe after freeze, stock reboot, or empty Help)."
+    )
+    c = None
+    try:
+        c, _, _ = open_pointer_paramiko(host=host, password=password)
+        _maybe_save_password(args, host, password)
+        from paperpointer.cli import cmd_enable_settings_ui
+
+        code = cmd_enable_settings_ui(c)
+        if code == 0:
+            print(
+                "OK: open Settings → Help on the tablet (fresh open).\n"
+                "Optional: python cli.py pointer settings-ui-check"
+            )
+        return code
+    except Exception as e:
+        print(f"repair-ui error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        if c is not None:
+            try:
+                c.close()
+            except Exception:
+                pass
 
 
 def cmd_detect(args) -> int:
@@ -628,6 +721,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Layout key (it, us, de, …) or display name (Italian, …)",
     )
+    sub.add_parser(
+        "repair-ui",
+        parents=[child_shared],
+        help="Reinstall Settings → Help panel and re-tether XOVI (after freeze/empty Help)",
+    )
     sp = sub.add_parser("diagnose", parents=[child_shared])
     sp.add_argument("--probe-scan", action="store_true")
 
@@ -666,6 +764,7 @@ def main(argv=None) -> int:
         "unpair": lambda a: kb.cmd_unpair(_kb_args_view(a)),
         "refuse-layout": lambda a: kb.cmd_refuse_layout(_kb_args_view(a)),
         "set-layout": cmd_set_layout,
+        "repair-ui": cmd_repair_ui,
         "diagnose": lambda a: kb.cmd_diagnose(_kb_args_view(a)),
         "pointer": cmd_pointer,
     }

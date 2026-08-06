@@ -290,9 +290,32 @@ class TestPhase4HostSurface(unittest.TestCase):
         actions = [a for a in p._subparsers._group_actions if a.dest == "command"]
         choices = set(actions[0].choices.keys())
         self.assertIn("set-layout", choices)
+        self.assertIn("repair-ui", choices)
         self.assertNotIn("install-native-app", choices)
         self.assertNotIn("uninstall-native-app", choices)
         self.assertNotIn("refuse-native", choices)
+
+    def test_repair_ui_calls_enable_settings(self):
+        import argparse
+        import cli as root_cli
+
+        conn = MagicMock()
+        args = argparse.Namespace(
+            host="10.11.99.1",
+            ip=None,
+            password="pw",
+            save_password=False,
+        )
+        with patch.object(
+            root_cli, "open_pointer_paramiko", return_value=(conn, "10.11.99.1", "pw")
+        ):
+            with patch(
+                "paperpointer.cli.cmd_enable_settings_ui", return_value=0
+            ) as en:
+                code = root_cli.cmd_repair_ui(args)
+        self.assertEqual(code, 0)
+        en.assert_called_once_with(conn)
+        conn.close.assert_called_once()
 
     def test_set_layout_resolves_display_and_key(self):
         import cli as root_cli
@@ -481,11 +504,20 @@ class TestPointerProbeParse(unittest.TestCase):
         )
 
         def fake_run(c, cmd, timeout=20):
-            self.assertIn("ACTIVE:", cmd)
-            self.assertIn("FAILED:", cmd)
-            self.assertIn("UNIT_ETC", cmd)
-            self.assertIn("UNIT_USR", cmd)
-            return probe_stdout, "", 0
+            # Pointer unit probe
+            if "ACTIVE:" in cmd and "UNIT_ETC" in cmd:
+                self.assertIn("FAILED:", cmd)
+                self.assertIn("UNIT_USR", cmd)
+                return probe_stdout, "", 0
+            # Settings / XOVI probe (second run from cmd_status)
+            if "QMD_ACTIVE" in cmd or "paperpointer-settings.qmd" in cmd:
+                return (
+                    "QMD_ACTIVE=no\nQMD_STAGED=no\nXOVI_START=no\n"
+                    "XOVI_MB=no\nXOCHITL=yes\n",
+                    "",
+                    0,
+                )
+            self.fail(f"unexpected run() cmd: {cmd[:120]}")
 
         with patch.object(root_cli, "_password_from_args", return_value="x"):
             with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):

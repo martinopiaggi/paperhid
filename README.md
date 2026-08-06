@@ -55,7 +55,7 @@ python cli.py status
 ```bash
 python cli.py status
 python cli.py set-layout --layout it
-python cli.py pointer enable-settings-ui   # Settings → Help (3.28.0.164 + XOVI)
+python cli.py repair-ui                    # Settings → Help (3.28.0.164 + XOVI); also recovery
 python cli.py pointer enable-cursor        # optional visual cursor
 python cli.py pointer test-tap
 python cli.py uninstall --all
@@ -71,7 +71,15 @@ Firmware **3.28.0.164** + XOVI — see [docs/cursor.md](docs/cursor.md). **Save 
 
 Settings → Help is independent of the cursor: re-enabling the cursor does not remove the panel.
 
-If Help looks empty after a freeze or reboot, XOVI may not be tethered — recovery steps are in [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) (`python cli.py pointer enable-settings-ui`).
+**Settings recovery (average user):** if Help is empty after a freeze or reboot, connect USB and run:
+
+```bash
+python cli.py repair-ui
+```
+
+Then open **Settings → Help** once. Details: [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze).
+
+`python cli.py status` prints a `=== settings_ui ===` section; if `state: needs_repair`, run `repair-ui`.
 
 ## Troubleshooting
 
@@ -81,8 +89,8 @@ If Help looks empty after a freeze or reboot, XOVI may not be tethered — recov
 | Pointer bootstrap failed | Tablet Wi‑Fi; free `/home` space; `python cli.py bootstrap-python` |
 | Mouse not moving | `python cli.py status`; re-pair; wake HID after sleep |
 | Keyboard dead after sleep | Press a key; `status`; re-run `install --keyboard` if the unit is gone |
-| Settings → Help has no PaperHid block | Power-cycle if frozen; USB; `python cli.py pointer enable-settings-ui`; open Help again — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
-| BT keyboard forces landscape | Default off. If you enabled `osk_suppress=1` in `~/.paperpointer/pointer.conf`, set it back to `0` and restart the pointer service |
+| Settings → Help has no PaperHid block | `python cli.py repair-ui` then open Help — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
+| BT keyboard forces landscape | Default off. If you set `osk_suppress=1` in `~/.paperpointer/pointer.conf`, set `0` and restart pointer |
 
 ## Tests
 
