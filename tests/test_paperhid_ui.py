@@ -106,6 +106,10 @@ class TestPaperhidUiShipped(unittest.TestCase):
             self.assertIn(f'qsTr("{label}")', text)
         self.assertIn('arguments: ["set-layout", "it"]', text)
         self.assertIn('arguments: ["set-layout", "us"]', text)
+        self.assertIn('arguments: ["set-layout", "us_intl"]', text)
+        self.assertIn("US Intl", text)
+        self.assertIn("preferredHeight: 48", text)
+        self.assertIn("dead keys", text)
 
     def test_set_layout_command_allowlist(self):
         text = UI.read_text(encoding="utf-8")

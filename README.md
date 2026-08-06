@@ -47,7 +47,8 @@ python cli.py status
 |------|--------|
 | Pair a new keyboard / mouse | Host: `python cli.py scan` then `pair` |
 | Status / BT on-off-restart / reconnect | Tablet: **Settings → Help** (after `enable-settings-ui`) |
-| Language layout (US/UK/DE/FR/IT/ES buttons) | Tablet: **Settings → Help**, or host `set-layout` |
+| Language layout (US, **US Intl**, UK, DE, FR, IT, ES) | Tablet: **Settings → Help**, or host `set-layout` |
+| US International accents (`'` then `e` → é) | Tablet: **US Intl**, or `set-layout --layout us_intl` |
 | Other layouts (full list) | Host: `python cli.py set-layout --layout it` |
 | Cursor overlay | Host: `pointer enable-cursor` / `stock-ui` (docs/cursor.md) |
 
