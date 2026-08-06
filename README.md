@@ -71,6 +71,8 @@ Firmware **3.28.0.164** + XOVI — see [docs/cursor.md](docs/cursor.md). **Save 
 
 Settings → Help is independent of the cursor: re-enabling the cursor does not remove the panel.
 
+If Help looks empty after a freeze or reboot, XOVI may not be tethered — recovery steps are in [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) (`python cli.py pointer enable-settings-ui`).
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -79,6 +81,7 @@ Settings → Help is independent of the cursor: re-enabling the cursor does not 
 | Pointer bootstrap failed | Tablet Wi‑Fi; free `/home` space; `python cli.py bootstrap-python` |
 | Mouse not moving | `python cli.py status`; re-pair; wake HID after sleep |
 | Keyboard dead after sleep | Press a key; `status`; re-run `install --keyboard` if the unit is gone |
+| Settings → Help has no PaperHid block | Power-cycle if frozen; USB; `python cli.py pointer enable-settings-ui`; open Help again — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
 
 ## Tests
 
