@@ -96,6 +96,13 @@ restart_pointer() {
 }
 
 with_lock() {
+    # Drop stale locks older than 120s (crashed prior command on BusyBox).
+    if [ -d "$LOCK_DIR" ]; then
+        age=$(find "$LOCK_DIR" -maxdepth 0 -type d -mmin +2 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${age:-0}" -ge 1 ]; then
+            rmdir "$LOCK_DIR" 2>/dev/null || true
+        fi
+    fi
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         set_error "busy"
         printf '%s\n' '{"ok":false,"error":"busy"}'
@@ -138,7 +145,8 @@ cmd_status() {
 
     saved_mac=""
     if [ -f "$KB_MAC_FILE" ]; then
-        saved_mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | head -c 32)
+        # BusyBox head has no -c; MAC is 17 chars when valid.
+        saved_mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | cut -c1-17)
     fi
     saved_mac_j=$(json_escape "$saved_mac")
 
@@ -314,7 +322,7 @@ cmd_keyboard_reconnect() {
     }
     mac=""
     if [ -f "$KB_MAC_FILE" ]; then
-        mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | head -c 32)
+        mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | cut -c1-17)
     fi
     case "$mac" in
         [0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f])

@@ -21,7 +21,7 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 
 def setup_logging(verbose: bool = True, debug: bool = False) -> logging.Logger:
-    """Configure console logging for the terminal that launched main.py / cli.
+    """Configure console logging for the terminal that launched cli.py.
 
     Idempotent: safe to call more than once.
     """

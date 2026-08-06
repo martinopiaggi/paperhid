@@ -71,6 +71,12 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn("cross|win95", text)
         self.assertIn("0|3000|10000|60000", text)
 
+    def test_busybox_safe_mac_read(self):
+        """Tablet BusyBox head has no -c; use cut for MAC truncation."""
+        text = UI.read_text(encoding="utf-8")
+        self.assertNotIn("head -c", text)
+        self.assertIn("cut -c1-17", text)
+
     def test_settings_qmd_uses_paperhid_ui_only(self):
         text = SETTINGS_QMD.read_text(encoding="utf-8")
         self.assertIn('command: "/home/root/.paperhid/paperhid-ui"', text)

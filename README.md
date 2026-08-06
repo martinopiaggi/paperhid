@@ -45,12 +45,6 @@ python cli.py pair --name YourKeyboardOrMouse
 - Keyboard-only: `python cli.py install --keyboard` (no Entware).
 - Mouse-only after keyboard: `python cli.py install --pointer`.
 
-Optional desktop GUI (same SSH password flow):
-
-```bash
-python main.py
-```
-
 ### 4. Smoke check
 
 ```bash
@@ -66,9 +60,14 @@ Wake the keyboard/mouse after deep sleep (press a key). After a tablet OTA, re-r
 python cli.py status
 python cli.py uninstall --all
 python cli.py bootstrap-python   # Entware + python3 only (if install failed offline)
+python cli.py set-layout --layout it
 python cli.py pointer test-tap
-python cli.py pointer stock-ui   # remove optional cursor overlay
+python cli.py pointer stock-ui           # remove optional cursor overlay
+python cli.py pointer enable-settings-ui # Settings → Help controls (firmware 3.28.0.164)
+python cli.py install-native-app         # optional AppLoad app (pairing UX on tablet)
 ```
+
+**On-device UI:** prefer **Settings → Help** after `enable-settings-ui` (status, Bluetooth, keyboard reconnect, pointer knobs). Pairing stays on the host CLI for now (`scan` / `pair`). Optional **AppLoad** app via `install-native-app` if you want the older full on-tablet keyboard UI.
 
 Password order: `--password` → `PAPERHID_PASSWORD` → legacy env aliases → saved config (`--save-password` after a successful connect).
 

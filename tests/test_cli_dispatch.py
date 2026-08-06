@@ -271,6 +271,75 @@ class TestRootPointerDispatchCleanup(unittest.TestCase):
         fake.close.assert_called_once()
 
 
+class TestPhase4HostSurface(unittest.TestCase):
+    """Desktop GUI removed; layout + native-app install via unified CLI."""
+
+    def test_desktop_gui_entry_removed(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / "main.py").exists())
+        self.assertFalse((root / "ui").is_dir())
+
+    def test_parser_has_layout_and_native_app(self):
+        import cli as root_cli
+
+        p = root_cli.build_parser()
+        actions = [a for a in p._subparsers._group_actions if a.dest == "command"]
+        choices = set(actions[0].choices.keys())
+        for name in (
+            "set-layout",
+            "install-native-app",
+            "uninstall-native-app",
+        ):
+            self.assertIn(name, choices)
+
+    def test_set_layout_resolves_display_and_key(self):
+        import cli as root_cli
+
+        p = root_cli.build_parser()
+        a = p.parse_args(["set-layout", "--layout", "it"])
+        self.assertEqual(a.layout, "it")
+        b = p.parse_args(["set-layout", "--layout", "Italian"])
+        self.assertEqual(b.layout, "Italian")
+
+    def test_set_layout_unknown_exits_without_ssh(self):
+        import cli as root_cli
+        import argparse
+
+        args = argparse.Namespace(
+            layout="not-a-real-layout",
+            host="10.11.99.1",
+            ip=None,
+            password="x",
+            save_password=False,
+        )
+        with patch.object(root_cli, "open_keyboard_ssh") as open_ssh:
+            code = root_cli.cmd_set_layout(args)
+        self.assertEqual(code, 2)
+        open_ssh.assert_not_called()
+
+    def test_install_native_app_routes(self):
+        import cli as root_cli
+        import argparse
+
+        ssh = MagicMock()
+        args = argparse.Namespace(
+            host="10.11.99.1",
+            ip=None,
+            password="pw",
+            save_password=False,
+        )
+        with patch.object(
+            root_cli, "open_keyboard_ssh", return_value=(ssh, "10.11.99.1", "pw")
+        ):
+            with patch("core.native_app_installer.install") as inst:
+                code = root_cli.cmd_install_native_app(args)
+        self.assertEqual(code, 0)
+        inst.assert_called_once()
+        ssh.disconnect.assert_called_once()
+
+
 class TestUnifiedCliEntry(unittest.TestCase):
     def test_paperpointer_module_is_not_public_cli(self):
         import subprocess
