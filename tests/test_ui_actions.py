@@ -77,7 +77,7 @@ class TestUiActionsShipped(unittest.TestCase):
         ui = "/home/root/.paperhid/paperhid-ui"
         self.assertIn(f'command: "{ui}"', text)
         self.assertGreaterEqual(text.count(f'command: "{ui}"'), 5)
-        self.assertIn('arguments: ["status"]', text)
+        self.assertIn('arguments: ["status", "--fast"]', text)
         self.assertIn('arguments: ["set-hide-ms", "0"]', text)
         self.assertIn('arguments: ["set-hide-ms", "3000"]', text)
         self.assertIn('arguments: ["set-cursor-style", "cross"]', text)

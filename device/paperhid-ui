@@ -95,48 +95,111 @@ restart_pointer() {
     }
 }
 
+# Bounded command runner (BusyBox may ship timeout applet).
+run_bounded() {
+    secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+        return $?
+    fi
+    # Fallback: run in background and kill on deadline (best-effort).
+    "$@" &
+    pid=$!
+    i=0
+    while [ "$i" -lt "$secs" ]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid"
+            return $?
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 124
+}
+
+btctl() {
+    # shellcheck disable=SC2086
+    run_bounded 8 bluetoothctl "$@" 2>/dev/null || true
+}
+
+sysctl_quiet() {
+    run_bounded 15 systemctl "$@" >/dev/null 2>&1
+    return $?
+}
+
 with_lock() {
-    # Drop stale locks older than 120s (crashed prior command on BusyBox).
+    # Reclaim lock only if owner PID is dead (not age-based — layout can be long).
     if [ -d "$LOCK_DIR" ]; then
-        age=$(find "$LOCK_DIR" -maxdepth 0 -type d -mmin +2 2>/dev/null | wc -l | tr -d ' ')
-        if [ "${age:-0}" -ge 1 ]; then
+        if [ -f "$LOCK_DIR/pid" ]; then
+            old=$(sed -n '1p' "$LOCK_DIR/pid" 2>/dev/null || true)
+            if [ -n "$old" ] && ! kill -0 "$old" 2>/dev/null; then
+                rm -rf "$LOCK_DIR" 2>/dev/null || true
+            fi
+        else
+            # Legacy lock without pid: drop if empty/orphan.
             rmdir "$LOCK_DIR" 2>/dev/null || true
         fi
     fi
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-        set_error "busy"
+        # Contention: do not clobber last real error.
         printf '%s\n' '{"ok":false,"error":"busy"}'
         exit 3
     fi
+    printf '%s\n' "$$" >"$LOCK_DIR/pid"
     # shellcheck disable=SC2064
-    trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT HUP TERM
+    trap 'rm -rf "$LOCK_DIR" 2>/dev/null || true' EXIT INT HUP TERM
     "$@"
     code=$?
-    rmdir "$LOCK_DIR" 2>/dev/null || true
+    rm -rf "$LOCK_DIR" 2>/dev/null || true
     trap - EXIT INT HUP TERM
     return "$code"
 }
 
-bt_show_field() {
-    # bluetoothctl show | first matching Powered/Discovering/Pairable line
+# Parse adapter flags from one bluetoothctl show blob.
+parse_show_flag() {
     field="$1"
-    out=$(bluetoothctl show 2>/dev/null || true)
-    echo "$out" | sed -n "s/^[[:space:]]*${field}:[[:space:]]*//p" | head -n 1 | tr '[:upper:]' '[:lower:]'
+    blob="$2"
+    echo "$blob" | sed -n "s/^[[:space:]]*${field}:[[:space:]]*//p" | head -n 1 | tr '[:upper:]' '[:lower:]'
+}
+
+emit_status_json() {
+    # Args via globals set by cmd_status: adapter_*, services, paired_json, nodes_json, ...
+    printf '%s\n' "{\"ok\":true,\"adapter\":{\"present\":${adapter_present},\"powered\":${powered},\"pairable\":${pairable},\"discovering\":${discovering}},\"services\":{\"bluetooth\":\"${bt_svc}\",\"keyboard\":\"${kb_svc}\",\"pointer\":\"${ptr_svc}\"},\"keyboard\":{\"saved_mac\":\"${saved_mac_j}\",\"layout\":\"${layout_j}\"},\"paired\":${paired_json},\"input_nodes\":${nodes_json},\"pointer\":{\"installed\":${pointer_installed},\"service\":\"${ptr_svc}\",\"cursor\":${cursor},\"cursor_hide_ms\":${hide},\"accel\":${accel},\"cursor_style\":\"$(json_escape "$style")\"},\"last_error\":\"${last_err_j}\"}"
 }
 
 cmd_status() {
+    # Usage: cmd_status [ --fast ]
+    # --fast: UI path — one show, paired list only, no per-device info.
+    fast=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --fast) fast=1 ;;
+            *)
+                printf '%s\n' '{"ok":false,"error":"invalid status argument"}'
+                return 2
+                ;;
+        esac
+        shift
+    done
+
     adapter_present=false
     powered=false
     pairable=false
     discovering=false
-    if bluetoothctl list 2>/dev/null | grep -q .; then
+
+    show_blob=$(btctl show)
+    list_blob=$(btctl list)
+    if echo "$list_blob" | grep -q .; then
         adapter_present=true
     fi
-    p=$(bt_show_field Powered)
+    p=$(parse_show_flag Powered "$show_blob")
     [ "$p" = "yes" ] && powered=true
-    p=$(bt_show_field Pairable)
+    p=$(parse_show_flag Pairable "$show_blob")
     [ "$p" = "yes" ] && pairable=true
-    p=$(bt_show_field Discovering)
+    p=$(parse_show_flag Discovering "$show_blob")
     [ "$p" = "yes" ] && discovering=true
 
     bt_svc=$(svc_state bluetooth.service)
@@ -145,30 +208,24 @@ cmd_status() {
 
     saved_mac=""
     if [ -f "$KB_MAC_FILE" ]; then
-        # BusyBox head has no -c; MAC is 17 chars when valid.
         saved_mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | cut -c1-17)
     fi
     saved_mac_j=$(json_escape "$saved_mac")
 
-    # Paired devices (read-only list).
-    paired_json="["
-    first=1
-    paired_blob=$(bluetoothctl devices Paired 2>/dev/null || true)
-    echo "$paired_blob" | while IFS= read -r line; do
-        :
-    done
-    # Build paired array without subshell variable loss: temp file.
     tmp_paired="$HOME_PH/.status-paired.$$"
     : >"$tmp_paired"
+    paired_blob=$(btctl devices Paired)
     echo "$paired_blob" | while IFS= read -r line; do
         mac=$(echo "$line" | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\) .*/\1/p')
         [ -n "$mac" ] || continue
         name=$(echo "$line" | sed -n 's/^Device [0-9A-Fa-f:]\{17\} //p')
-        info=$(bluetoothctl info "$mac" 2>/dev/null || true)
         trusted=false
         connected=false
-        echo "$info" | grep -qi 'Trusted: yes' && trusted=true
-        echo "$info" | grep -qi 'Connected: yes' && connected=true
+        if [ "$fast" -eq 0 ]; then
+            info=$(btctl info "$mac")
+            echo "$info" | grep -qi 'Trusted: yes' && trusted=true
+            echo "$info" | grep -qi 'Connected: yes' && connected=true
+        fi
         mac_u=$(echo "$mac" | tr '[:lower:]' '[:upper:]')
         printf '%s\t%s\t%s\t%s\n' "$mac_u" "$name" "$trusted" "$connected" >>"$tmp_paired"
     done
@@ -187,29 +244,31 @@ cmd_status() {
     paired_json="${paired_json}]"
     rm -f "$tmp_paired"
 
-    # Input nodes (recognized keyboard/pointer-ish names).
-    tmp_nodes="$HOME_PH/.status-nodes.$$"
-    : >"$tmp_nodes"
-    if [ -r /proc/bus/input/devices ]; then
-        grep -E '^N: Name=' /proc/bus/input/devices 2>/dev/null \
-            | sed 's/^N: Name="//; s/"$//' \
-            | grep -Ei 'key|mouse|touchpad|track|clvx|hid' \
-            | head -n 12 >"$tmp_nodes" || true
-    fi
-    nodes_json="["
-    first=1
-    while IFS= read -r n; do
-        [ -n "$n" ] || continue
-        nj=$(json_escape "$n")
-        if [ "$first" -eq 1 ]; then
-            first=0
-        else
-            nodes_json="${nodes_json},"
+    nodes_json="[]"
+    if [ "$fast" -eq 0 ]; then
+        tmp_nodes="$HOME_PH/.status-nodes.$$"
+        : >"$tmp_nodes"
+        if [ -r /proc/bus/input/devices ]; then
+            grep -E '^N: Name=' /proc/bus/input/devices 2>/dev/null \
+                | sed 's/^N: Name="//; s/"$//' \
+                | grep -Ei 'key|mouse|touchpad|track|clvx|hid' \
+                | head -n 12 >"$tmp_nodes" || true
         fi
-        nodes_json="${nodes_json}\"${nj}\""
-    done <"$tmp_nodes"
-    nodes_json="${nodes_json}]"
-    rm -f "$tmp_nodes"
+        nodes_json="["
+        first=1
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            nj=$(json_escape "$n")
+            if [ "$first" -eq 1 ]; then
+                first=0
+            else
+                nodes_json="${nodes_json},"
+            fi
+            nodes_json="${nodes_json}\"${nj}\""
+        done <"$tmp_nodes"
+        nodes_json="${nodes_json}]"
+        rm -f "$tmp_nodes"
+    fi
 
     hide=$(get_conf cursor_hide_ms 0)
     accel=$(get_conf accel 2.0)
@@ -230,20 +289,28 @@ cmd_status() {
     fi
     last_err_j=$(json_escape "$last_err")
 
-    # Compact single-line JSON so QML chunk accumulation always yields one object.
-    printf '%s\n' "{\"ok\":true,\"adapter\":{\"present\":${adapter_present},\"powered\":${powered},\"pairable\":${pairable},\"discovering\":${discovering}},\"services\":{\"bluetooth\":\"${bt_svc}\",\"keyboard\":\"${kb_svc}\",\"pointer\":\"${ptr_svc}\"},\"keyboard\":{\"saved_mac\":\"${saved_mac_j}\",\"layout\":\"${layout_j}\"},\"paired\":${paired_json},\"input_nodes\":${nodes_json},\"pointer\":{\"installed\":${pointer_installed},\"service\":\"${ptr_svc}\",\"cursor\":${cursor},\"cursor_hide_ms\":${hide},\"accel\":${accel},\"cursor_style\":\"$(json_escape "$style")\"},\"last_error\":\"${last_err_j}\"}"
+    emit_status_json
 }
 
 # --- Bluetooth (reconnect service order matters) ---
 
 cmd_bluetooth_on() {
     clear_error
-    systemctl start bluetooth 2>/dev/null || true
-    bluetoothctl power on >/dev/null 2>&1 || true
-    bluetoothctl pairable on >/dev/null 2>&1 || true
-    # Restore reconnect service after power-on.
+    if ! sysctl_quiet start bluetooth; then
+        # May already be active.
+        true
+    fi
+    btctl power on >/dev/null
+    btctl pairable on >/dev/null
     if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
-        systemctl start "$KB_SERVICE" 2>/dev/null || true
+        sysctl_quiet start "$KB_SERVICE" || true
+    fi
+    show_blob=$(btctl show)
+    p=$(parse_show_flag Powered "$show_blob")
+    if [ "$p" != "yes" ]; then
+        set_error "bluetooth power on failed"
+        printf '%s\n' '{"ok":false,"error":"bluetooth power on failed"}'
+        return 13
     fi
     log "bluetooth-on"
     printf '%s\n' '{"ok":true,"action":"bluetooth-on"}'
@@ -253,15 +320,15 @@ cmd_bluetooth_off() {
     clear_error
     # Stop reconnect first so it cannot power the adapter back on.
     if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
-        systemctl stop "$KB_SERVICE" 2>/dev/null || true
+        sysctl_quiet stop "$KB_SERVICE" || true
     fi
-    # Disconnect connected devices (best-effort).
-    bluetoothctl devices Connected 2>/dev/null | while IFS= read -r line; do
+    # Best-effort disconnect (timeouts apply via btctl).
+    btctl devices Connected | while IFS= read -r line; do
         mac=$(echo "$line" | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\).*/\1/p')
         [ -n "$mac" ] || continue
-        bluetoothctl disconnect "$mac" >/dev/null 2>&1 || true
+        btctl disconnect "$mac" >/dev/null
     done
-    bluetoothctl power off >/dev/null 2>&1 || true
+    btctl power off >/dev/null
     log "bluetooth-off"
     printf '%s\n' '{"ok":true,"action":"bluetooth-off"}'
 }
@@ -269,18 +336,25 @@ cmd_bluetooth_off() {
 cmd_bluetooth_restart() {
     clear_error
     if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
-        systemctl stop "$KB_SERVICE" 2>/dev/null || true
+        sysctl_quiet stop "$KB_SERVICE" || true
     fi
-    systemctl restart bluetooth 2>/dev/null || {
+    if ! sysctl_quiet restart bluetooth; then
         set_error "bluetooth restart failed"
         printf '%s\n' '{"ok":false,"error":"bluetooth restart failed"}'
         return 13
-    }
+    fi
     sleep 1
-    bluetoothctl power on >/dev/null 2>&1 || true
-    bluetoothctl pairable on >/dev/null 2>&1 || true
+    btctl power on >/dev/null
+    btctl pairable on >/dev/null
     if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
-        systemctl start "$KB_SERVICE" 2>/dev/null || true
+        sysctl_quiet start "$KB_SERVICE" || true
+    fi
+    show_blob=$(btctl show)
+    p=$(parse_show_flag Powered "$show_blob")
+    if [ "$p" != "yes" ]; then
+        set_error "bluetooth restart: power on failed"
+        printf '%s\n' '{"ok":false,"error":"bluetooth restart: power on failed"}'
+        return 13
     fi
     log "bluetooth-restart"
     printf '%s\n' '{"ok":true,"action":"bluetooth-restart"}'
@@ -472,7 +546,7 @@ cmd_set_layout() {
 
 usage() {
     echo "Usage: paperhid-ui <command> [arg]" >&2
-    echo "  status | bluetooth-on | bluetooth-off | bluetooth-restart" >&2
+    echo "  status [--fast] | bluetooth-on | bluetooth-off | bluetooth-restart" >&2
     echo "  keyboard-enable | keyboard-disable | keyboard-reconnect" >&2
     echo "  pointer-restart | set-accel <v> | set-cursor-style <s> | set-hide-ms <ms>" >&2
     echo "  set-layout <key>" >&2
@@ -485,7 +559,8 @@ shift || true
 
 case "$cmd" in
     status)
-        cmd_status
+        # Serialize with BT mutations (critical section backstop).
+        with_lock cmd_status "$@"
         ;;
     bluetooth-on)
         with_lock cmd_bluetooth_on

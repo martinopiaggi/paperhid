@@ -29,20 +29,48 @@ class TestPaperhidUiShipped(unittest.TestCase):
             "set-accel",
             "set-cursor-style",
             "set-hide-ms",
+            "set-layout",
         ):
             self.assertIn(cmd, text)
 
-    def test_operation_lock(self):
+    def test_status_uses_with_lock(self):
+        text = UI.read_text(encoding="utf-8")
+        self.assertIn("with_lock cmd_status", text)
+
+    def test_operation_lock_pid_and_busy(self):
         text = UI.read_text(encoding="utf-8")
         self.assertIn("paperhid-ui.lock", text)
         self.assertIn("with_lock", text)
         self.assertIn("busy", text)
+        # PID ownership; reclaim only if dead.
+        self.assertIn('"$LOCK_DIR/pid"', text)
+        self.assertIn("kill -0", text)
+        # Contention prints busy without set_error immediately after mkdir fail.
+        mkdir_i = text.index("if ! mkdir \"$LOCK_DIR\"")
+        slice_ = text[mkdir_i : mkdir_i + 280]
+        self.assertIn('"error":"busy"', slice_)
+        self.assertNotIn("set_error", slice_)
+
+    def test_status_fast_vs_full(self):
+        text = UI.read_text(encoding="utf-8")
+        self.assertIn("--fast", text)
+        self.assertIn("fast=1", text)
+        # Full path still has info; fast skips it inside conditional.
+        self.assertIn('btctl info "$mac"', text)
+        self.assertIn('[ "$fast" -eq 0 ]', text)
+        # Single show blob for adapter flags.
+        self.assertIn("show_blob=$(btctl show)", text)
+
+    def test_bounded_bluetoothctl(self):
+        text = UI.read_text(encoding="utf-8")
+        self.assertIn("run_bounded", text)
+        self.assertIn("btctl()", text)
 
     def test_bluetooth_off_stops_reconnect_first(self):
         text = UI.read_text(encoding="utf-8")
         self.assertIn('KB_SERVICE="remarkable-bt-keyboard.service"', text)
         off = text[text.index("cmd_bluetooth_off") : text.index("cmd_bluetooth_restart")]
-        stop_pos = off.index('systemctl stop "$KB_SERVICE"')
+        stop_pos = off.index('sysctl_quiet stop "$KB_SERVICE"')
         power_pos = off.index("power off")
         self.assertLess(stop_pos, power_pos)
 
@@ -50,11 +78,10 @@ class TestPaperhidUiShipped(unittest.TestCase):
         text = UI.read_text(encoding="utf-8")
         on = text[text.index("cmd_bluetooth_on") : text.index("cmd_bluetooth_off")]
         self.assertIn("power on", on)
-        self.assertIn('systemctl start "$KB_SERVICE"', on)
+        self.assertIn('sysctl_quiet start "$KB_SERVICE"', on)
 
     def test_status_emits_json_shape_keys(self):
         text = UI.read_text(encoding="utf-8")
-        # Shell source escapes quotes as \"key\" inside the printf template.
         for key in (
             "adapter",
             "services",
@@ -65,6 +92,7 @@ class TestPaperhidUiShipped(unittest.TestCase):
         ):
             self.assertIn(key, text)
         self.assertIn("cmd_status", text)
+
     def test_allowlists(self):
         text = UI.read_text(encoding="utf-8")
         self.assertIn("1.0|2.0|3.0|4.0", text)
@@ -72,7 +100,6 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn("0|3000|10000|60000", text)
 
     def test_busybox_safe_mac_read(self):
-        """Tablet BusyBox head has no -c; use cut for MAC truncation."""
         text = UI.read_text(encoding="utf-8")
         self.assertNotIn("head -c", text)
         self.assertIn("cut -c1-17", text)
@@ -81,17 +108,27 @@ class TestPaperhidUiShipped(unittest.TestCase):
         text = SETTINGS_QMD.read_text(encoding="utf-8")
         self.assertIn('command: "/home/root/.paperhid/paperhid-ui"', text)
         self.assertNotIn("/home/root/.paperpointer/ui-actions/", text)
-        self.assertIn('arguments: ["status"]', text)
+        self.assertIn('arguments: ["status", "--fast"]', text)
         self.assertIn('arguments: ["bluetooth-on"]', text)
-        self.assertIn('arguments: ["bluetooth-off"]', text)
-        self.assertIn('arguments: ["bluetooth-restart"]', text)
-        self.assertIn('arguments: ["keyboard-reconnect"]', text)
-        self.assertIn('arguments: ["set-hide-ms", "0"]', text)
-        self.assertIn('arguments: ["set-cursor-style", "cross"]', text)
-        # Accumulate stdout before JSON parse
         self.assertIn("statusBuf", text)
         self.assertIn("JSON.parse", text)
         self.assertIn("applyStatusJson", text)
+
+    def test_settings_qmd_single_flight(self):
+        text = SETTINGS_QMD.read_text(encoding="utf-8")
+        self.assertIn("uiBusy", text)
+        self.assertIn("activeOperation", text)
+        self.assertIn("beginOperation", text)
+        self.assertIn("finishOperation", text)
+        self.assertIn("runMutation", text)
+        self.assertIn("statusDebounce", text)
+        self.assertIn("interval: 1500", text)
+        # No permanent busy if start fails.
+        self.assertIn("Could not start command", text)
+        self.assertIn("!executor.startCommand(100)", text)
+        # No immediate refresh after mutation.
+        self.assertNotIn("onMutationFinished", text)
+        self.assertNotIn("mutationBusy", text)
 
     def test_settings_qmd_has_sections(self):
         text = SETTINGS_QMD.read_text(encoding="utf-8")
@@ -117,7 +154,6 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn("set-layout", text)
         self.assertIn("cmd_set_layout", text)
         self.assertIn("set_layout.py", text)
-        # Recover UI if helper fails (must not leave dead xochitl).
         self.assertIn("xovi/start", text)
 
     def test_set_layout_helper_prefers_xovi_and_recovers(self):
@@ -132,7 +168,7 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn('HOME_PH="/home/root/.paperhid"', text)
         self.assertIn("paperhid-ui", text)
         self.assertIn('UI_BIN="$HOME_PH/paperhid-ui"', text)
-        self.assertIn("[ -x \"$UI_BIN\" ]", text)
+        self.assertIn('[ -x "$UI_BIN" ]', text)
         self.assertNotIn(
             "systemctl is-active --quiet paperpointer.service",
             text,
@@ -146,6 +182,16 @@ class TestPaperhidUiShipped(unittest.TestCase):
         body = rest[:end]
         self.assertIn("paperhid-ui", body)
         self.assertIn(".paperhid", body)
+
+
+class TestPaperhidUiArgDispatch(unittest.TestCase):
+    """Lightweight pure checks on status arg parsing in the shell source."""
+
+    def test_status_rejects_unknown_args_in_source(self):
+        text = UI.read_text(encoding="utf-8")
+        self.assertIn("invalid status argument", text)
+        # Only --fast is accepted beyond bare status.
+        self.assertIn("--fast) fast=1 ;;", text)
 
 
 if __name__ == "__main__":

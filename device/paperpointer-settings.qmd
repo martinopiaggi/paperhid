@@ -21,11 +21,8 @@ AFFECT /qml/device/view/settings/Help.qml
                 property string layoutSummary: qsTr("Layout: (refresh)")
                 property string pointerSummary: qsTr("Pointer: (refresh)")
                 property bool pointerInstalled: false
-                property bool mutationBusy: false
-
-                function setBusy(v) {
-                    mutationBusy = v;
-                }
+                property bool uiBusy: false
+                property string activeOperation: ""
 
                 function applyStatusJson(text) {
                     var raw = (text || "").trim();
@@ -67,9 +64,12 @@ AFFECT /qml/device/view/settings/Help.qml
                             var pl = [];
                             for (var i = 0; i < paired.length; i++) {
                                 var d = paired[i];
-                                pl.push((d.name || "?") + "  " + (d.mac || "")
-                                    + (d.connected ? qsTr(" [connected]") : "")
-                                    + (d.trusted ? qsTr(" [trusted]") : ""));
+                                var extra = "";
+                                if (d.connected)
+                                    extra += qsTr(" [connected]");
+                                if (d.trusted)
+                                    extra += qsTr(" [trusted]");
+                                pl.push((d.name || "?") + "  " + (d.mac || "") + extra);
                             }
                             pairedSummary = qsTr("Paired devices:\n") + pl.join("\n");
                         }
@@ -91,16 +91,72 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
                 }
 
-                function refreshStatus() {
-                    statusBuf = "";
-                    paperHidStatusCommand.startCommand(100);
+                function friendlyMutation(text) {
+                    var raw = (text || "").trim();
+                    if (!raw.length)
+                        return qsTr("Done");
+                    try {
+                        var j = JSON.parse(raw);
+                        if (j && j.ok === false)
+                            return (j.error || qsTr("Failed"));
+                        if (j && j.action)
+                            return qsTr("OK: %1").arg(j.action);
+                    } catch (e) {
+                    }
+                    return raw.length > 120 ? raw.substring(0, 120) : raw;
                 }
 
-                function onMutationFinished(okText) {
-                    setBusy(false);
-                    if (okText && okText.length)
-                        actionStatus = okText.trim();
-                    refreshStatus();
+                function beginOperation(id, executor) {
+                    if (uiBusy)
+                        return false;
+                    uiBusy = true;
+                    activeOperation = id;
+                    statusDebounce.stop();
+                    if (!executor.startCommand(100)) {
+                        uiBusy = false;
+                        activeOperation = "";
+                        actionStatus = qsTr("Could not start command");
+                        return false;
+                    }
+                    return true;
+                }
+
+                function finishOperation(id, outText, armDebounce) {
+                    if (activeOperation !== id)
+                        return;
+                    uiBusy = false;
+                    activeOperation = "";
+                    if (outText && outText.length)
+                        actionStatus = friendlyMutation(outText);
+                    if (armDebounce)
+                        statusDebounce.restart();
+                }
+
+                function refreshStatus() {
+                    if (uiBusy)
+                        return;
+                    statusBuf = "";
+                    actionStatus = qsTr("Refreshing...");
+                    beginOperation("status", paperHidStatusCommand);
+                }
+
+                function runMutation(id, executor, pendingLabel) {
+                    if (uiBusy)
+                        return;
+                    if (executor.outBuf !== undefined)
+                        executor.outBuf = "";
+                    actionStatus = pendingLabel;
+                    beginOperation(id, executor);
+                }
+
+                Timer {
+                    id: statusDebounce
+                    interval: 1500
+                    repeat: false
+                    onTriggered: {
+                        if (!paperPointerSettingsRoot.uiBusy)
+                            paperPointerSettingsRoot.refreshStatus();
+                    }
                 }
 
                 ArkControls.Body {
@@ -128,7 +184,7 @@ AFFECT /qml/device/view/settings/Help.qml
                     Layout.fillWidth: true
                     type: ArkTokens.Button.secondary
                     text: qsTr("Refresh status")
-                    enabled: !paperHidStatusCommand.running && !paperPointerSettingsRoot.mutationBusy
+                    enabled: !paperPointerSettingsRoot.uiBusy
                     onClicked: paperPointerSettingsRoot.refreshStatus()
                 }
 
@@ -147,39 +203,27 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("BT on")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth on...");
-                            paperHidBtOn.outBuf = "";
-                            paperHidBtOn.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "bt-on", paperHidBtOn, qsTr("Bluetooth on..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("BT off")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth off...");
-                            paperHidBtOff.outBuf = "";
-                            paperHidBtOff.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "bt-off", paperHidBtOff, qsTr("Bluetooth off..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("BT restart")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth restart...");
-                            paperHidBtRestart.outBuf = "";
-                            paperHidBtRestart.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "bt-restart", paperHidBtRestart, qsTr("Bluetooth restart..."))
                     }
                 }
 
@@ -211,39 +255,27 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("KB enable")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard enable...");
-                            paperHidKbEnable.outBuf = "";
-                            paperHidKbEnable.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "kb-enable", paperHidKbEnable, qsTr("Keyboard enable..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("KB disable")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard disable...");
-                            paperHidKbDisable.outBuf = "";
-                            paperHidKbDisable.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "kb-disable", paperHidKbDisable, qsTr("Keyboard disable..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Reconnect")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard reconnect...");
-                            paperHidKbReconnect.outBuf = "";
-                            paperHidKbReconnect.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "kb-reconnect", paperHidKbReconnect, qsTr("Keyboard reconnect..."))
                     }
                 }
 
@@ -277,13 +309,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("US")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout US...");
-                            paperHidLayoutUs.outBuf = "";
-                            paperHidLayoutUs.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-us", paperHidLayoutUs, qsTr("Layout US..."))
                     }
 
                     ArkControls.Button {
@@ -292,13 +320,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 160
                         type: ArkTokens.Button.secondary
                         text: qsTr("US Intl")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout US International...");
-                            paperHidLayoutUsIntl.outBuf = "";
-                            paperHidLayoutUsIntl.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-us-intl", paperHidLayoutUsIntl, qsTr("Layout US International..."))
                     }
 
                     ArkControls.Button {
@@ -307,13 +331,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("UK")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout UK...");
-                            paperHidLayoutUk.outBuf = "";
-                            paperHidLayoutUk.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-uk", paperHidLayoutUk, qsTr("Layout UK..."))
                     }
 
                     ArkControls.Button {
@@ -322,13 +342,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("DE")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout DE...");
-                            paperHidLayoutDe.outBuf = "";
-                            paperHidLayoutDe.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-de", paperHidLayoutDe, qsTr("Layout DE..."))
                     }
 
                     Item { Layout.fillWidth: true }
@@ -344,13 +360,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("FR")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout FR...");
-                            paperHidLayoutFr.outBuf = "";
-                            paperHidLayoutFr.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-fr", paperHidLayoutFr, qsTr("Layout FR..."))
                     }
 
                     ArkControls.Button {
@@ -359,13 +371,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("IT")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout IT...");
-                            paperHidLayoutIt.outBuf = "";
-                            paperHidLayoutIt.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-it", paperHidLayoutIt, qsTr("Layout IT..."))
                     }
 
                     ArkControls.Button {
@@ -374,13 +382,9 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("ES")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Layout ES...");
-                            paperHidLayoutEs.outBuf = "";
-                            paperHidLayoutEs.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "layout-es", paperHidLayoutEs, qsTr("Layout ES..."))
                     }
 
                     Item { Layout.fillWidth: true }
@@ -408,26 +412,18 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Keep visible")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperHidHide0.outBuf = "";
-                            paperHidHide0.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "hide0", paperHidHide0, qsTr("Applying..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Hide 3s")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperHidHide3.outBuf = "";
-                            paperHidHide3.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "hide3", paperHidHide3, qsTr("Applying..."))
                     }
                 }
 
@@ -440,39 +436,27 @@ AFFECT /qml/device/view/settings/Help.qml
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Crosshair")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperHidStyleCross.outBuf = "";
-                            paperHidStyleCross.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "style-cross", paperHidStyleCross, qsTr("Applying..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Win95")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperHidStyleWin95.outBuf = "";
-                            paperHidStyleWin95.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "style-win95", paperHidStyleWin95, qsTr("Applying..."))
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
                         text: qsTr("Restart ptr")
-                        enabled: !paperPointerSettingsRoot.mutationBusy
-                        onClicked: {
-                            paperPointerSettingsRoot.setBusy(true);
-                            paperPointerSettingsRoot.actionStatus = qsTr("Pointer restart...");
-                            paperHidPtrRestart.outBuf = "";
-                            paperHidPtrRestart.startCommand(100);
-                        }
+                        enabled: !paperPointerSettingsRoot.uiBusy
+                        onClicked: paperPointerSettingsRoot.runMutation(
+                            "ptr-restart", paperHidPtrRestart, qsTr("Pointer restart..."))
                     }
                 }
 
@@ -491,17 +475,20 @@ AFFECT /qml/device/view/settings/Help.qml
                 AsyncCommandExecutor {
                     id: paperHidStatusCommand
                     command: "/home/root/.paperhid/paperhid-ui"
-                    arguments: ["status"]
+                    arguments: ["status", "--fast"]
 
                     onStdOutAvailable: function(output) {
                         paperPointerSettingsRoot.statusBuf += output;
                     }
                     onRunningChanged: {
-                        if (!running && paperPointerSettingsRoot.statusBuf.length) {
-                            var buf = paperPointerSettingsRoot.statusBuf;
-                            paperPointerSettingsRoot.statusBuf = "";
-                            paperPointerSettingsRoot.applyStatusJson(buf);
-                        }
+                        if (running)
+                            return;
+                        if (paperPointerSettingsRoot.activeOperation !== "status")
+                            return;
+                        var buf = paperPointerSettingsRoot.statusBuf;
+                        paperPointerSettingsRoot.statusBuf = "";
+                        paperPointerSettingsRoot.applyStatusJson(buf);
+                        paperPointerSettingsRoot.finishOperation("status", "", false);
                     }
                     Component.onCompleted: paperPointerSettingsRoot.refreshStatus()
                 }
@@ -512,12 +499,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["bluetooth-on"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "bt-on"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -529,12 +518,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["bluetooth-off"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "bt-off"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -546,12 +537,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["bluetooth-restart"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "bt-restart"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -563,12 +556,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["keyboard-enable"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "kb-enable"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -580,12 +575,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["keyboard-disable"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "kb-disable"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -597,12 +594,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["keyboard-reconnect"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "kb-reconnect"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -614,12 +613,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "us"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-us"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -631,12 +632,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "us_intl"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-us-intl"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -648,12 +651,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "uk"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-uk"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -665,12 +670,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "de"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-de"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -682,12 +689,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "fr"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-fr"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -699,12 +708,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "it"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-it"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -716,12 +727,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-layout", "es"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "layout-es"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -733,12 +746,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-hide-ms", "0"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "hide0"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -750,12 +765,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-hide-ms", "3000"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "hide3"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -767,12 +784,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-cursor-style", "cross"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "style-cross"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -784,12 +803,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["set-cursor-style", "win95"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "style-win95"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
@@ -801,12 +822,14 @@ AFFECT /qml/device/view/settings/Help.qml
                     arguments: ["pointer-restart"]
                     property string outBuf: ""
                     property bool launched: false
+                    property string opId: "ptr-restart"
                     onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) launched = true;
-                        else if (launched) {
+                        if (running) {
+                            launched = true;
+                        } else if (launched) {
                             launched = false;
-                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            paperPointerSettingsRoot.finishOperation(opId, outBuf, true);
                             outBuf = "";
                         }
                     }
