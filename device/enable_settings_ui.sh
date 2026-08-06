@@ -6,6 +6,7 @@ set -eu
 SUPPORTED_VERSION="3.28.0.164"
 XOVI="/home/root/xovi"
 EXT="$XOVI/extensions.d"
+INACTIVE="$XOVI/inactive-extensions"
 QMD_HOME="$XOVI/exthome/qt-resource-rebuilder"
 HOME_PP="/home/root/.paperpointer"
 HOME_PH="/home/root/.paperhid"
@@ -103,12 +104,25 @@ IMAGE_VERSION=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os
     fail 10 "settings QML supports $SUPPORTED_VERSION; tablet is ${IMAGE_VERSION:-unknown}"
 [ -x "$XOVI/start" ] || fail 11 "XOVI is not installed at $XOVI"
 [ -f "$EXT/qt-resource-rebuilder.so" ] || fail 12 "qt-resource-rebuilder.so is not active"
-[ -f "$EXT/xovi-message-broker.so" ] || fail 13 "xovi-message-broker.so is not active"
-[ -f "$EXT/qt-command-executor.so" ] || fail 14 "qt-command-executor.so is not active"
+# Stock XOVI ships broker/executor under inactive-extensions; activate like enable_cursor.
+if [ ! -f "$EXT/xovi-message-broker.so" ] &&
+   [ ! -f "$INACTIVE/xovi-message-broker.so" ]; then
+    fail 13 "xovi-message-broker.so is not installed (need XOVI with message-broker)"
+fi
+if [ ! -f "$EXT/qt-command-executor.so" ] &&
+   [ ! -f "$INACTIVE/qt-command-executor.so" ]; then
+    fail 14 "qt-command-executor.so is not installed (need XOVI with command-executor)"
+fi
 [ -f "$QMD_SOURCE" ] || fail 15 "missing $QMD_SOURCE"
 [ -x "$UI_BIN" ] || fail 16 "missing executable $UI_BIN (PaperHid UI helper)"
 
-mkdir -p "$QMD_HOME"
+mkdir -p "$EXT" "$INACTIVE" "$QMD_HOME"
+if [ ! -f "$EXT/xovi-message-broker.so" ]; then
+    cp -a "$INACTIVE/xovi-message-broker.so" "$EXT/xovi-message-broker.so"
+fi
+if [ ! -f "$EXT/qt-command-executor.so" ]; then
+    cp -a "$INACTIVE/qt-command-executor.so" "$EXT/qt-command-executor.so"
+fi
 if [ -f "$QMD_TARGET" ]; then
     cp -p "$QMD_TARGET" "$QMD_BACKUP"
     HAD_QMD=1
