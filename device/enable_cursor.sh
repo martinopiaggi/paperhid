@@ -11,9 +11,8 @@ QMD_HOME="$XOVI/exthome/qt-resource-rebuilder"
 HOME_PP="/home/root/.paperpointer"
 QMD_NAME="paperpointer-cursor.qmd"
 QMD_TARGET="$QMD_HOME/$QMD_NAME"
-# Optional settings qmd is managed by enable-settings-ui. Re-enabling the
-# cursor removes it as a conservative reset; install it again only afterward.
-LEGACY_SETTINGS_QMD="$QMD_HOME/paperpointer-settings.qmd"
+# Settings > Help (paperpointer-settings.qmd) is independent: enable-cursor
+# must never create, replace, or delete it. Use enable/disable-settings-ui.
 CURSOR_PIPE="$HOME_PP/cursor.fifo"
 PING_LOG="/tmp/paperpointer-cursor-ping"
 
@@ -36,7 +35,8 @@ rollback() {
             sed -i 's/^cursor=.*/cursor=0/' "$HOME_PP/pointer.conf" || true
         fi
         systemctl restart paperpointer.service >/dev/null 2>&1 || true
-        rm -f "$QMD_TARGET" "$LEGACY_SETTINGS_QMD" "$PING_LOG"
+        # Rollback cursor only — never touch the Settings panel QMD.
+        rm -f "$QMD_TARGET" "$PING_LOG"
         if [ "$BROKER_ADDED" -eq 1 ]; then
             rm -f "$EXT/xovi-message-broker.so"
         fi
@@ -118,8 +118,6 @@ QMD_TMP="$QMD_HOME/.$QMD_NAME.tmp.$$"
 cp "$HOME_PP/$QMD_NAME" "$QMD_TMP"
 chmod 0644 "$QMD_TMP"
 mv -f "$QMD_TMP" "$QMD_TARGET"
-# Never leave the experimental settings patch that crash-looped MainView.
-rm -f "$LEGACY_SETTINGS_QMD"
 
 echo "starting tethered XOVI cursor for xochitl $IMAGE_VERSION"
 "$XOVI/start" || fail 20 "XOVI start failed"

@@ -8,6 +8,8 @@ XOVI="/home/root/xovi"
 EXT="$XOVI/extensions.d"
 QMD_HOME="$XOVI/exthome/qt-resource-rebuilder"
 HOME_PP="/home/root/.paperpointer"
+HOME_PH="/home/root/.paperhid"
+UI_BIN="$HOME_PH/paperhid-ui"
 QMD_SOURCE="$HOME_PP/paperpointer-settings.qmd"
 QMD_TARGET="$QMD_HOME/paperpointer-settings.qmd"
 QMD_BACKUP="$QMD_HOME/.paperpointer-settings.qmd.rollback.$$"
@@ -104,10 +106,7 @@ IMAGE_VERSION=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os
 [ -f "$EXT/xovi-message-broker.so" ] || fail 13 "xovi-message-broker.so is not active"
 [ -f "$EXT/qt-command-executor.so" ] || fail 14 "qt-command-executor.so is not active"
 [ -f "$QMD_SOURCE" ] || fail 15 "missing $QMD_SOURCE"
-for script in lib.sh status.sh set-hide-ms.sh set-cursor-style.sh; do
-    [ -x "$HOME_PP/ui-actions/$script" ] ||
-        fail 16 "missing executable ui-actions/$script"
-done
+[ -x "$UI_BIN" ] || fail 16 "missing executable $UI_BIN (PaperHid UI helper)"
 
 mkdir -p "$QMD_HOME"
 if [ -f "$QMD_TARGET" ]; then
@@ -150,7 +149,9 @@ fi
 # PID that is expected to have changed during installation.
 wait_for_stable_xochitl 15 45 ||
     fail 25 "xochitl became unstable during settings canary"
-systemctl is-active --quiet paperpointer.service || fail 26 "paperpointer service is not active"
+
+# Settings must install on keyboard-only tablets. The pointer daemon is
+# optional; when present, leave it alone (do not require it active).
 
 ARMED=0
 rm -f "$QMD_BACKUP"

@@ -14,6 +14,8 @@ from shared.constants import (
     ENABLE_SYMLINK_DIR,
     ENABLE_SYMLINK_PATH,
     KEYBOARD_MAC_PATH,
+    LEGACY_HOME_DIRS,
+    LEGACY_KEYBOARD_MAC_PATHS,
     LIB_REMOTE_PATH,
     LIB_SCRIPT_NAME,
     RESUME_REMOTE_PATH,
@@ -319,17 +321,19 @@ def uninstall(ssh):
         timeout=5,
     )
 
-    ssh.exec(f"rm -rf {SCRIPT_DIR} /home/root/.movewriter", timeout=10)
-    ssh.exec(
-        f"rm -f {KEYBOARD_MAC_PATH} /home/root/.movewriter-keyboard", timeout=5
-    )
+    legacy_homes = " ".join(LEGACY_HOME_DIRS)
+    legacy_macs = " ".join(LEGACY_KEYBOARD_MAC_PATHS)
+    ssh.exec(f"rm -rf {SCRIPT_DIR} {legacy_homes}", timeout=10)
+    ssh.exec(f"rm -f {KEYBOARD_MAC_PATH} {legacy_macs}", timeout=5)
 
     ssh.exec("systemctl daemon-reload", timeout=10)
 
 
 def save_keyboard_mac(ssh, mac):
     """Write keyboard MAC to device so the service can auto-reconnect on boot."""
-    ssh.upload_string(mac.strip().upper() if mac else mac, KEYBOARD_MAC_PATH)
+    from shared.bluetooth import normalize_mac
+
+    ssh.upload_string(normalize_mac(mac), KEYBOARD_MAC_PATH)
 
 
 def wait_for_controller(ssh, timeout=40):

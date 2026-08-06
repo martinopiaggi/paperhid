@@ -1,0 +1,462 @@
+#!/bin/sh
+# Single allow-listed PaperHid on-device control helper for Settings > Help.
+# Invoked only with fixed command names and allow-listed arguments from QML.
+# Usage: paperhid-ui <command> [arg]
+set -eu
+
+HOME_PH="/home/root/.paperhid"
+HOME_PP="/home/root/.paperpointer"
+CONF="$HOME_PP/pointer.conf"
+LOCK_DIR="$HOME_PH/paperhid-ui.lock"
+LOG="$HOME_PH/ui.log"
+ERR_FILE="$HOME_PH/last-error"
+KB_SERVICE="remarkable-bt-keyboard.service"
+PTR_SERVICE="paperpointer.service"
+KB_MAC_FILE="/home/root/.paperwriter-keyboard"
+
+mkdir -p "$HOME_PH" 2>/dev/null || true
+
+log() {
+    ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo unknown)
+    echo "[$ts] $*" >>"$LOG" 2>/dev/null || true
+}
+
+set_error() {
+    printf '%s\n' "$*" >"$ERR_FILE" 2>/dev/null || true
+    log "ERROR: $*"
+}
+
+clear_error() {
+    rm -f "$ERR_FILE" 2>/dev/null || true
+}
+
+json_escape() {
+    # Minimal JSON string escape (no control chars expected in our fields).
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\r\n'
+}
+
+svc_state() {
+    unit="$1"
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+        echo active
+    elif systemctl is-failed --quiet "$unit" 2>/dev/null; then
+        echo failed
+    elif systemctl cat "$unit" >/dev/null 2>&1; then
+        echo inactive
+    else
+        echo absent
+    fi
+}
+
+get_conf() {
+    key="$1"
+    default="$2"
+    if [ -f "$CONF" ] && grep -q "^${key}=" "$CONF" 2>/dev/null; then
+        sed -n "s/^${key}=//p" "$CONF" | head -n 1
+    else
+        echo "$default"
+    fi
+}
+
+set_conf() {
+    key="$1"
+    value="$2"
+    if [ ! -f "$CONF" ]; then
+        set_error "pointer.conf missing"
+        return 10
+    fi
+    if grep -q "^${key}=" "$CONF"; then
+        sed -i "s/^${key}=.*/${key}=${value}/" "$CONF"
+    else
+        echo "${key}=${value}" >>"$CONF"
+    fi
+}
+
+restart_pointer() {
+    if ! systemctl cat "$PTR_SERVICE" >/dev/null 2>&1; then
+        set_error "pointer service not installed"
+        return 11
+    fi
+    systemctl restart "$PTR_SERVICE" || {
+        set_error "pointer restart failed"
+        return 12
+    }
+    i=0
+    while [ "$i" -lt 8 ]; do
+        if systemctl is-active --quiet "$PTR_SERVICE"; then
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 0.25
+    done
+    systemctl is-active --quiet "$PTR_SERVICE" || {
+        set_error "pointer service not active after restart"
+        return 12
+    }
+}
+
+with_lock() {
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        set_error "busy"
+        printf '%s\n' '{"ok":false,"error":"busy"}'
+        exit 3
+    fi
+    # shellcheck disable=SC2064
+    trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT HUP TERM
+    "$@"
+    code=$?
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+    trap - EXIT INT HUP TERM
+    return "$code"
+}
+
+bt_show_field() {
+    # bluetoothctl show | first matching Powered/Discovering/Pairable line
+    field="$1"
+    out=$(bluetoothctl show 2>/dev/null || true)
+    echo "$out" | sed -n "s/^[[:space:]]*${field}:[[:space:]]*//p" | head -n 1 | tr '[:upper:]' '[:lower:]'
+}
+
+cmd_status() {
+    adapter_present=false
+    powered=false
+    pairable=false
+    discovering=false
+    if bluetoothctl list 2>/dev/null | grep -q .; then
+        adapter_present=true
+    fi
+    p=$(bt_show_field Powered)
+    [ "$p" = "yes" ] && powered=true
+    p=$(bt_show_field Pairable)
+    [ "$p" = "yes" ] && pairable=true
+    p=$(bt_show_field Discovering)
+    [ "$p" = "yes" ] && discovering=true
+
+    bt_svc=$(svc_state bluetooth.service)
+    kb_svc=$(svc_state "$KB_SERVICE")
+    ptr_svc=$(svc_state "$PTR_SERVICE")
+
+    saved_mac=""
+    if [ -f "$KB_MAC_FILE" ]; then
+        saved_mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | head -c 32)
+    fi
+    saved_mac_j=$(json_escape "$saved_mac")
+
+    # Paired devices (read-only list).
+    paired_json="["
+    first=1
+    paired_blob=$(bluetoothctl devices Paired 2>/dev/null || true)
+    echo "$paired_blob" | while IFS= read -r line; do
+        :
+    done
+    # Build paired array without subshell variable loss: temp file.
+    tmp_paired="$HOME_PH/.status-paired.$$"
+    : >"$tmp_paired"
+    echo "$paired_blob" | while IFS= read -r line; do
+        mac=$(echo "$line" | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\) .*/\1/p')
+        [ -n "$mac" ] || continue
+        name=$(echo "$line" | sed -n 's/^Device [0-9A-Fa-f:]\{17\} //p')
+        info=$(bluetoothctl info "$mac" 2>/dev/null || true)
+        trusted=false
+        connected=false
+        echo "$info" | grep -qi 'Trusted: yes' && trusted=true
+        echo "$info" | grep -qi 'Connected: yes' && connected=true
+        mac_u=$(echo "$mac" | tr '[:lower:]' '[:upper:]')
+        printf '%s\t%s\t%s\t%s\n' "$mac_u" "$name" "$trusted" "$connected" >>"$tmp_paired"
+    done
+    first=1
+    paired_json="["
+    while IFS=$(printf '\t') read -r mac name trusted connected; do
+        [ -n "$mac" ] || continue
+        name_j=$(json_escape "$name")
+        if [ "$first" -eq 1 ]; then
+            first=0
+        else
+            paired_json="${paired_json},"
+        fi
+        paired_json="${paired_json}{\"mac\":\"${mac}\",\"name\":\"${name_j}\",\"trusted\":${trusted},\"connected\":${connected}}"
+    done <"$tmp_paired"
+    paired_json="${paired_json}]"
+    rm -f "$tmp_paired"
+
+    # Input nodes (recognized keyboard/pointer-ish names).
+    tmp_nodes="$HOME_PH/.status-nodes.$$"
+    : >"$tmp_nodes"
+    if [ -r /proc/bus/input/devices ]; then
+        grep -E '^N: Name=' /proc/bus/input/devices 2>/dev/null \
+            | sed 's/^N: Name="//; s/"$//' \
+            | grep -Ei 'key|mouse|touchpad|track|clvx|hid' \
+            | head -n 12 >"$tmp_nodes" || true
+    fi
+    nodes_json="["
+    first=1
+    while IFS= read -r n; do
+        [ -n "$n" ] || continue
+        nj=$(json_escape "$n")
+        if [ "$first" -eq 1 ]; then
+            first=0
+        else
+            nodes_json="${nodes_json},"
+        fi
+        nodes_json="${nodes_json}\"${nj}\""
+    done <"$tmp_nodes"
+    nodes_json="${nodes_json}]"
+    rm -f "$tmp_nodes"
+
+    hide=$(get_conf cursor_hide_ms 0)
+    accel=$(get_conf accel 2.0)
+    cursor=$(get_conf cursor 0)
+    style=$(get_conf cursor_style cross)
+    pointer_installed=false
+    [ -f "$HOME_PP/paperpointerd.py" ] && pointer_installed=true
+
+    last_err=""
+    if [ -f "$ERR_FILE" ]; then
+        last_err=$(head -n 1 "$ERR_FILE" 2>/dev/null || true)
+    fi
+    last_err_j=$(json_escape "$last_err")
+
+    # Compact single-line JSON so QML chunk accumulation always yields one object.
+    printf '%s\n' "{\"ok\":true,\"adapter\":{\"present\":${adapter_present},\"powered\":${powered},\"pairable\":${pairable},\"discovering\":${discovering}},\"services\":{\"bluetooth\":\"${bt_svc}\",\"keyboard\":\"${kb_svc}\",\"pointer\":\"${ptr_svc}\"},\"keyboard\":{\"saved_mac\":\"${saved_mac_j}\"},\"paired\":${paired_json},\"input_nodes\":${nodes_json},\"pointer\":{\"installed\":${pointer_installed},\"service\":\"${ptr_svc}\",\"cursor\":${cursor},\"cursor_hide_ms\":${hide},\"accel\":${accel},\"cursor_style\":\"$(json_escape "$style")\"},\"last_error\":\"${last_err_j}\"}"
+}
+
+# --- Bluetooth (reconnect service order matters) ---
+
+cmd_bluetooth_on() {
+    clear_error
+    systemctl start bluetooth 2>/dev/null || true
+    bluetoothctl power on >/dev/null 2>&1 || true
+    bluetoothctl pairable on >/dev/null 2>&1 || true
+    # Restore reconnect service after power-on.
+    if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        systemctl start "$KB_SERVICE" 2>/dev/null || true
+    fi
+    log "bluetooth-on"
+    printf '%s\n' '{"ok":true,"action":"bluetooth-on"}'
+}
+
+cmd_bluetooth_off() {
+    clear_error
+    # Stop reconnect first so it cannot power the adapter back on.
+    if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        systemctl stop "$KB_SERVICE" 2>/dev/null || true
+    fi
+    # Disconnect connected devices (best-effort).
+    bluetoothctl devices Connected 2>/dev/null | while IFS= read -r line; do
+        mac=$(echo "$line" | sed -n 's/^Device \([0-9A-Fa-f:]\{17\}\).*/\1/p')
+        [ -n "$mac" ] || continue
+        bluetoothctl disconnect "$mac" >/dev/null 2>&1 || true
+    done
+    bluetoothctl power off >/dev/null 2>&1 || true
+    log "bluetooth-off"
+    printf '%s\n' '{"ok":true,"action":"bluetooth-off"}'
+}
+
+cmd_bluetooth_restart() {
+    clear_error
+    if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        systemctl stop "$KB_SERVICE" 2>/dev/null || true
+    fi
+    systemctl restart bluetooth 2>/dev/null || {
+        set_error "bluetooth restart failed"
+        printf '%s\n' '{"ok":false,"error":"bluetooth restart failed"}'
+        return 13
+    }
+    sleep 1
+    bluetoothctl power on >/dev/null 2>&1 || true
+    bluetoothctl pairable on >/dev/null 2>&1 || true
+    if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        systemctl start "$KB_SERVICE" 2>/dev/null || true
+    fi
+    log "bluetooth-restart"
+    printf '%s\n' '{"ok":true,"action":"bluetooth-restart"}'
+}
+
+cmd_keyboard_enable() {
+    clear_error
+    if ! systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        set_error "keyboard service not installed"
+        printf '%s\n' '{"ok":false,"error":"keyboard service not installed"}'
+        return 14
+    fi
+    systemctl enable "$KB_SERVICE" 2>/dev/null || true
+    systemctl start "$KB_SERVICE" || {
+        set_error "keyboard enable failed"
+        printf '%s\n' '{"ok":false,"error":"keyboard enable failed"}'
+        return 14
+    }
+    log "keyboard-enable"
+    printf '%s\n' '{"ok":true,"action":"keyboard-enable"}'
+}
+
+cmd_keyboard_disable() {
+    clear_error
+    if systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        systemctl stop "$KB_SERVICE" 2>/dev/null || true
+        systemctl disable "$KB_SERVICE" 2>/dev/null || true
+    fi
+    log "keyboard-disable"
+    printf '%s\n' '{"ok":true,"action":"keyboard-disable"}'
+}
+
+cmd_keyboard_reconnect() {
+    clear_error
+    if ! systemctl cat "$KB_SERVICE" >/dev/null 2>&1; then
+        set_error "keyboard service not installed"
+        printf '%s\n' '{"ok":false,"error":"keyboard service not installed"}'
+        return 15
+    fi
+    # Nondestructive: restart reconnect path without removing pairings.
+    systemctl restart "$KB_SERVICE" || {
+        set_error "keyboard reconnect failed"
+        printf '%s\n' '{"ok":false,"error":"keyboard reconnect failed"}'
+        return 15
+    }
+    mac=""
+    if [ -f "$KB_MAC_FILE" ]; then
+        mac=$(tr -d ' \t\r\n' <"$KB_MAC_FILE" | head -c 32)
+    fi
+    case "$mac" in
+        [0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f])
+            bluetoothctl connect "$mac" >/dev/null 2>&1 || true
+            ;;
+    esac
+    log "keyboard-reconnect"
+    printf '%s\n' '{"ok":true,"action":"keyboard-reconnect"}'
+}
+
+cmd_pointer_restart() {
+    clear_error
+    restart_pointer || {
+        printf '%s\n' '{"ok":false,"error":"pointer restart failed"}'
+        return 12
+    }
+    log "pointer-restart"
+    printf '%s\n' '{"ok":true,"action":"pointer-restart"}'
+}
+
+cmd_set_accel() {
+    val="${1:-}"
+    case "$val" in
+        1.0|2.0|3.0|4.0) ;;
+        *)
+            set_error "accel must be 1.0, 2.0, 3.0, or 4.0"
+            printf '%s\n' '{"ok":false,"error":"invalid accel"}'
+            return 2
+            ;;
+    esac
+    clear_error
+    set_conf accel "$val" || {
+        printf '%s\n' '{"ok":false,"error":"pointer.conf missing"}'
+        return 10
+    }
+    restart_pointer || {
+        printf '%s\n' '{"ok":false,"error":"pointer restart failed"}'
+        return 12
+    }
+    log "set-accel $val"
+    printf '%s\n' "{\"ok\":true,\"action\":\"set-accel\",\"accel\":\"${val}\"}"
+}
+
+cmd_set_cursor_style() {
+    val="${1:-}"
+    case "$val" in
+        cross|win95) ;;
+        *)
+            set_error "style must be cross or win95"
+            printf '%s\n' '{"ok":false,"error":"invalid style"}'
+            return 2
+            ;;
+    esac
+    if [ "$val" = "win95" ] && [ ! -f "$HOME_PP/cursors/win95.png" ]; then
+        set_error "missing win95.png"
+        printf '%s\n' '{"ok":false,"error":"missing win95 skin"}'
+        return 3
+    fi
+    clear_error
+    set_conf cursor_style "$val" || {
+        printf '%s\n' '{"ok":false,"error":"pointer.conf missing"}'
+        return 10
+    }
+    printf '%s\n' "$val" >"$HOME_PP/cursor_style"
+    restart_pointer || {
+        printf '%s\n' '{"ok":false,"error":"pointer restart failed"}'
+        return 12
+    }
+    log "set-cursor-style $val"
+    printf '%s\n' "{\"ok\":true,\"action\":\"set-cursor-style\",\"style\":\"${val}\"}"
+}
+
+cmd_set_hide_ms() {
+    val="${1:-}"
+    case "$val" in
+        0|3000|10000|60000) ;;
+        *)
+            set_error "hide_ms must be 0, 3000, 10000, or 60000"
+            printf '%s\n' '{"ok":false,"error":"invalid hide_ms"}'
+            return 2
+            ;;
+    esac
+    clear_error
+    set_conf cursor_hide_ms "$val" || {
+        printf '%s\n' '{"ok":false,"error":"pointer.conf missing"}'
+        return 10
+    }
+    restart_pointer || {
+        printf '%s\n' '{"ok":false,"error":"pointer restart failed"}'
+        return 12
+    }
+    log "set-hide-ms $val"
+    printf '%s\n' "{\"ok\":true,\"action\":\"set-hide-ms\",\"hide_ms\":${val}}"
+}
+
+usage() {
+    echo "Usage: paperhid-ui <command> [arg]" >&2
+    echo "  status | bluetooth-on | bluetooth-off | bluetooth-restart" >&2
+    echo "  keyboard-enable | keyboard-disable | keyboard-reconnect" >&2
+    echo "  pointer-restart | set-accel <v> | set-cursor-style <s> | set-hide-ms <ms>" >&2
+    exit 2
+}
+
+cmd="${1:-}"
+[ -n "$cmd" ] || usage
+shift || true
+
+case "$cmd" in
+    status)
+        cmd_status
+        ;;
+    bluetooth-on)
+        with_lock cmd_bluetooth_on
+        ;;
+    bluetooth-off)
+        with_lock cmd_bluetooth_off
+        ;;
+    bluetooth-restart)
+        with_lock cmd_bluetooth_restart
+        ;;
+    keyboard-enable)
+        with_lock cmd_keyboard_enable
+        ;;
+    keyboard-disable)
+        with_lock cmd_keyboard_disable
+        ;;
+    keyboard-reconnect)
+        with_lock cmd_keyboard_reconnect
+        ;;
+    pointer-restart)
+        with_lock cmd_pointer_restart
+        ;;
+    set-accel)
+        with_lock cmd_set_accel "${1:-}"
+        ;;
+    set-cursor-style)
+        with_lock cmd_set_cursor_style "${1:-}"
+        ;;
+    set-hide-ms)
+        with_lock cmd_set_hide_ms "${1:-}"
+        ;;
+    *)
+        usage
+        ;;
+esac

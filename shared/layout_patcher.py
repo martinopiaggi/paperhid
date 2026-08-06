@@ -13,7 +13,7 @@ from shared.constants import (
 )
 from shared.transport import Transport
 
-log = logging.getLogger("paperwriter.layout_patcher")
+log = logging.getLogger("paperhid.layout_patcher")
 
 ENTRY_SIZE = 16
 MOVE_KEYMAP_OFFSET = 0x0250b0

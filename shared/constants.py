@@ -1,8 +1,29 @@
-"""Paths and unit names shared by desktop and on-device code."""
+"""Paths and unit names shared by desktop and on-device code.
 
+Product name is PaperHid. On-device paths and unit basenames that still say
+``paperwriter`` / ``paperpointer`` are intentional runtime locations for
+existing installs — change only with a migration path.
+"""
+
+# Live install layout (do not rename without migrating tablet state).
 SCRIPT_DIR = "/home/root/.paperwriter"
 KEYBOARD_MAC_PATH = "/home/root/.paperwriter-keyboard"
 LAYOUT_FILE = "/home/root/.paperwriter-layout"
+
+# PaperHid-owned on-device helpers (Settings UI); pointer conf stays under .paperpointer.
+PAPERHID_HOME = "/home/root/.paperhid"
+PAPERHID_UI = f"{PAPERHID_HOME}/paperhid-ui"
+
+# Residual paths cleaned on uninstall (MoveWriter / older brands).
+LEGACY_HOME_DIRS = (
+    "/home/root/.movewriter",
+)
+LEGACY_KEYBOARD_MAC_PATHS = (
+    "/home/root/.movewriter-keyboard",
+)
+LEGACY_NATIVE_APP_IDS = (
+    "movewriter",
+)
 
 LIBEPAPER_PATH = "/usr/lib/plugins/platforms/libepaper.so"
 BACKUP_PATH = f"{SCRIPT_DIR}/libepaper.so.orig"

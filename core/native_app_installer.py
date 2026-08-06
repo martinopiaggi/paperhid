@@ -39,7 +39,7 @@ APP_FILES = {
     ],
     "shared": [
         "__init__.py", "constants.py", "transport.py",
-        "bluetooth.py", "layout_patcher.py",
+        "bluetooth.py", "layout_patcher.py", "layouts.py",
     ],
     "qml": [
         "main.qml", "KeyboardSection.qml", "ServiceSection.qml",

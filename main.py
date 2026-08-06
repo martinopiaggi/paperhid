@@ -16,12 +16,6 @@ def main(argv=None):
         help="Less terminal output (warnings/errors only)",
     )
     parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        default=True,
-        help="Verbose terminal logging (default)",
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help="Debug logging (includes SSH command traces)",

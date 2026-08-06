@@ -10,5 +10,3 @@ python cli.py pointer stock-ui      # back to stock UI
 Clicks always use multitouch injection; the cursor is visual only (QML overlay).
 
 **Save work first** — xochitl restarts.
-
-Do **not** install the abandoned `extensions/pp-cursor` framebuffer extension.

@@ -1,15 +1,11 @@
 VERSION 3.28.0.164
 
-; Optional PaperHid pointer controls in Settings > Help. This is deliberately
-; independent from MainView and the cursor FIFO patch. Every command and
-; argument is fixed at parse time and routes through an allow-listed script.
+; PaperHid controls in Settings > Help. Independent of MainView / cursor FIFO.
+; Every command and argument is fixed at parse time (paperhid-ui allow-list).
 AFFECT /qml/device/view/settings/Help.qml
     IMPORT net.asivery.CommandExecutor 1.0
     IMPORT net.asivery.XoviMessageBroker 2.0
 
-    ; Make this a real ColumnLayout child rather than an overlay in itemWrapper:
-    ; the stock layout then reserves vertical space for the controls and support
-    ; text, so varying Help widgets cannot overlap the PaperHid buttons.
     TRAVERSE Background#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
         LOCATE BEFORE ArkControls.Body#supportText
         INSERT {
@@ -20,11 +16,100 @@ AFFECT /qml/device/view/settings/Help.qml
                 Layout.fillWidth: true
 
                 property string actionStatus: qsTr("Ready")
+                property string statusBuf: ""
+                property string pairedSummary: qsTr("Paired devices: (refresh)")
+                property string pointerSummary: qsTr("Pointer: (refresh)")
+                property bool pointerInstalled: false
+                property bool mutationBusy: false
+
+                function setBusy(v) {
+                    mutationBusy = v;
+                }
+
+                function applyStatusJson(text) {
+                    var raw = (text || "").trim();
+                    if (!raw.length)
+                        return;
+                    try {
+                        var j = JSON.parse(raw);
+                        if (!j || j.ok === false) {
+                            actionStatus = (j && j.error) ? j.error : qsTr("Status error");
+                            return;
+                        }
+                        var ad = j.adapter || {};
+                        var sv = j.services || {};
+                        var kb = j.keyboard || {};
+                        var lines = [];
+                        lines.push(qsTr("BT adapter: %1 powered=%2")
+                            .arg(ad.present ? qsTr("yes") : qsTr("no"))
+                            .arg(ad.powered ? qsTr("yes") : qsTr("no")));
+                        lines.push(qsTr("Services: bt=%1 kb=%2 ptr=%3")
+                            .arg(sv.bluetooth || "?")
+                            .arg(sv.keyboard || "?")
+                            .arg(sv.pointer || "?"));
+                        if (kb.saved_mac)
+                            lines.push(qsTr("Saved keyboard: %1").arg(kb.saved_mac));
+                        else
+                            lines.push(qsTr("Saved keyboard: (none)"));
+                        if (j.last_error)
+                            lines.push(qsTr("Last error: %1").arg(j.last_error));
+                        actionStatus = lines.join("\n");
+
+                        var paired = j.paired || [];
+                        if (!paired.length) {
+                            pairedSummary = qsTr("Paired devices: (none)");
+                        } else {
+                            var pl = [];
+                            for (var i = 0; i < paired.length; i++) {
+                                var d = paired[i];
+                                pl.push((d.name || "?") + "  " + (d.mac || "")
+                                    + (d.connected ? qsTr(" [connected]") : "")
+                                    + (d.trusted ? qsTr(" [trusted]") : ""));
+                            }
+                            pairedSummary = qsTr("Paired devices:\n") + pl.join("\n");
+                        }
+
+                        var ptr = j.pointer || {};
+                        pointerInstalled = !!ptr.installed;
+                        if (!ptr.installed) {
+                            pointerSummary = qsTr("Pointer: not installed (keyboard-only OK)");
+                        } else {
+                            pointerSummary = qsTr("Pointer: svc=%1 cursor=%2 hide_ms=%3 accel=%4 style=%5")
+                                .arg(ptr.service || "?")
+                                .arg(String(ptr.cursor))
+                                .arg(String(ptr.cursor_hide_ms))
+                                .arg(String(ptr.accel))
+                                .arg(ptr.cursor_style || "?");
+                        }
+                    } catch (e) {
+                        actionStatus = qsTr("Bad status JSON");
+                    }
+                }
+
+                function refreshStatus() {
+                    statusBuf = "";
+                    paperHidStatusCommand.startCommand(100);
+                }
+
+                function onMutationFinished(okText) {
+                    setBusy(false);
+                    if (okText && okText.length)
+                        actionStatus = okText.trim();
+                    refreshStatus();
+                }
 
                 ArkControls.Body {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("PaperHid pointer")
+                    font.bold: true
+                    text: qsTr("PaperHid")
+                }
+
+                // --- Status ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Status")
                 }
 
                 ArkControls.Body {
@@ -34,31 +119,19 @@ AFFECT /qml/device/view/settings/Help.qml
                     text: paperPointerSettingsRoot.actionStatus
                 }
 
-                RowLayout {
+                ArkControls.Button {
                     Layout.fillWidth: true
-                    spacing: ArkControls.Values.spacing.medium
+                    type: ArkTokens.Button.secondary
+                    text: qsTr("Refresh status")
+                    enabled: !paperHidStatusCommand.running && !paperPointerSettingsRoot.mutationBusy
+                    onClicked: paperPointerSettingsRoot.refreshStatus()
+                }
 
-                    ArkControls.Button {
-                        Layout.fillWidth: true
-                        type: ArkTokens.Button.secondary
-                        text: qsTr("Keep cursor visible")
-                        enabled: !paperPointerStickyCommand.running
-                        onClicked: {
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperPointerStickyCommand.startCommand(100);
-                        }
-                    }
-
-                    ArkControls.Button {
-                        Layout.fillWidth: true
-                        type: ArkTokens.Button.secondary
-                        text: qsTr("Hide after 3 seconds")
-                        enabled: !paperPointerHideCommand.running
-                        onClicked: {
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperPointerHideCommand.startCommand(100);
-                        }
-                    }
+                // --- Bluetooth ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Bluetooth")
                 }
 
                 RowLayout {
@@ -68,22 +141,193 @@ AFFECT /qml/device/view/settings/Help.qml
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
-                        text: qsTr("Crosshair cursor")
-                        enabled: !paperPointerStyleCrossCommand.running
+                        text: qsTr("BT on")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
                         onClicked: {
-                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperPointerStyleCrossCommand.startCommand(100);
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth on...");
+                            paperHidBtOn.outBuf = "";
+                            paperHidBtOn.startCommand(100);
                         }
                     }
 
                     ArkControls.Button {
                         Layout.fillWidth: true
                         type: ArkTokens.Button.secondary
-                        text: qsTr("Win95 cursor")
-                        enabled: !paperPointerStyleWin95Command.running
+                        text: qsTr("BT off")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
                         onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth off...");
+                            paperHidBtOff.outBuf = "";
+                            paperHidBtOff.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("BT restart")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Bluetooth restart...");
+                            paperHidBtRestart.outBuf = "";
+                            paperHidBtRestart.startCommand(100);
+                        }
+                    }
+                }
+
+                // --- Paired devices (read-only) ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Paired devices")
+                }
+
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: paperPointerSettingsRoot.pairedSummary
+                }
+
+                // --- Keyboard ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Keyboard")
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("KB enable")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard enable...");
+                            paperHidKbEnable.outBuf = "";
+                            paperHidKbEnable.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("KB disable")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard disable...");
+                            paperHidKbDisable.outBuf = "";
+                            paperHidKbDisable.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Reconnect")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Keyboard reconnect...");
+                            paperHidKbReconnect.outBuf = "";
+                            paperHidKbReconnect.startCommand(100);
+                        }
+                    }
+                }
+
+                // --- Pointer and cursor ---
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Pointer and cursor")
+                }
+
+                ArkControls.Body {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: paperPointerSettingsRoot.pointerSummary
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+                    visible: paperPointerSettingsRoot.pointerInstalled
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Keep visible")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
                             paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
-                            paperPointerStyleWin95Command.startCommand(100);
+                            paperHidHide0.outBuf = "";
+                            paperHidHide0.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Hide 3s")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperHidHide3.outBuf = "";
+                            paperHidHide3.startCommand(100);
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: ArkControls.Values.spacing.medium
+                    visible: paperPointerSettingsRoot.pointerInstalled
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Crosshair")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperHidStyleCross.outBuf = "";
+                            paperHidStyleCross.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Win95")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Applying...");
+                            paperHidStyleWin95.outBuf = "";
+                            paperHidStyleWin95.startCommand(100);
+                        }
+                    }
+
+                    ArkControls.Button {
+                        Layout.fillWidth: true
+                        type: ArkTokens.Button.secondary
+                        text: qsTr("Restart ptr")
+                        enabled: !paperPointerSettingsRoot.mutationBusy
+                        onClicked: {
+                            paperPointerSettingsRoot.setBusy(true);
+                            paperPointerSettingsRoot.actionStatus = qsTr("Pointer restart...");
+                            paperHidPtrRestart.outBuf = "";
+                            paperHidPtrRestart.startCommand(100);
                         }
                     }
                 }
@@ -98,89 +342,209 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
                 }
 
+                // --- Executors: fixed command + fixed args; accumulate stdout ---
+
                 AsyncCommandExecutor {
-                    id: paperPointerStatusCommand
-                    command: "/home/root/.paperpointer/ui-actions/status.sh"
-                    arguments: []
+                    id: paperHidStatusCommand
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["status"]
 
                     onStdOutAvailable: function(output) {
-                        paperPointerSettingsRoot.actionStatus = output.trim();
+                        paperPointerSettingsRoot.statusBuf += output;
                     }
-                    Component.onCompleted: startCommand(100)
+                    onRunningChanged: {
+                        if (!running && paperPointerSettingsRoot.statusBuf.length) {
+                            var buf = paperPointerSettingsRoot.statusBuf;
+                            paperPointerSettingsRoot.statusBuf = "";
+                            paperPointerSettingsRoot.applyStatusJson(buf);
+                        }
+                    }
+                    Component.onCompleted: paperPointerSettingsRoot.refreshStatus()
                 }
 
                 AsyncCommandExecutor {
-                    id: paperPointerStickyCommand
-                    command: "/home/root/.paperpointer/ui-actions/set-hide-ms.sh"
-                    arguments: ["0"]
+                    id: paperHidBtOn
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["bluetooth-on"]
+                    property string outBuf: ""
                     property bool launched: false
-
-                    onStdOutAvailable: function(output) {
-                        paperPointerSettingsRoot.actionStatus = output.trim();
-                    }
+                    onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) {
-                            launched = true;
-                        } else if (launched) {
+                        if (running) launched = true;
+                        else if (launched) {
                             launched = false;
-                            paperPointerStatusCommand.startCommand(100);
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
                         }
                     }
                 }
 
                 AsyncCommandExecutor {
-                    id: paperPointerHideCommand
-                    command: "/home/root/.paperpointer/ui-actions/set-hide-ms.sh"
-                    arguments: ["3000"]
+                    id: paperHidBtOff
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["bluetooth-off"]
+                    property string outBuf: ""
                     property bool launched: false
-
-                    onStdOutAvailable: function(output) {
-                        paperPointerSettingsRoot.actionStatus = output.trim();
-                    }
+                    onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) {
-                            launched = true;
-                        } else if (launched) {
+                        if (running) launched = true;
+                        else if (launched) {
                             launched = false;
-                            paperPointerStatusCommand.startCommand(100);
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
                         }
                     }
                 }
 
                 AsyncCommandExecutor {
-                    id: paperPointerStyleCrossCommand
-                    command: "/home/root/.paperpointer/ui-actions/set-cursor-style.sh"
-                    arguments: ["cross"]
+                    id: paperHidBtRestart
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["bluetooth-restart"]
+                    property string outBuf: ""
                     property bool launched: false
-
-                    onStdOutAvailable: function(output) {
-                        paperPointerSettingsRoot.actionStatus = output.trim();
-                    }
+                    onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) {
-                            launched = true;
-                        } else if (launched) {
+                        if (running) launched = true;
+                        else if (launched) {
                             launched = false;
-                            paperPointerStatusCommand.startCommand(100);
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
                         }
                     }
                 }
 
                 AsyncCommandExecutor {
-                    id: paperPointerStyleWin95Command
-                    command: "/home/root/.paperpointer/ui-actions/set-cursor-style.sh"
-                    arguments: ["win95"]
+                    id: paperHidKbEnable
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["keyboard-enable"]
+                    property string outBuf: ""
                     property bool launched: false
-
-                    onStdOutAvailable: function(output) {
-                        paperPointerSettingsRoot.actionStatus = output.trim();
-                    }
+                    onStdOutAvailable: function(output) { outBuf += output; }
                     onRunningChanged: {
-                        if (running) {
-                            launched = true;
-                        } else if (launched) {
+                        if (running) launched = true;
+                        else if (launched) {
                             launched = false;
-                            paperPointerStatusCommand.startCommand(100);
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidKbDisable
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["keyboard-disable"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidKbReconnect
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["keyboard-reconnect"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidHide0
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-hide-ms", "0"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidHide3
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-hide-ms", "3000"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidStyleCross
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-cursor-style", "cross"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidStyleWin95
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["set-cursor-style", "win95"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
+                        }
+                    }
+                }
+
+                AsyncCommandExecutor {
+                    id: paperHidPtrRestart
+                    command: "/home/root/.paperhid/paperhid-ui"
+                    arguments: ["pointer-restart"]
+                    property string outBuf: ""
+                    property bool launched: false
+                    onStdOutAvailable: function(output) { outBuf += output; }
+                    onRunningChanged: {
+                        if (running) launched = true;
+                        else if (launched) {
+                            launched = false;
+                            paperPointerSettingsRoot.onMutationFinished(outBuf);
+                            outBuf = "";
                         }
                     }
                 }

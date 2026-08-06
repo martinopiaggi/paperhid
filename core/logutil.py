@@ -9,7 +9,7 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 DATE_FORMAT = "%H:%M:%S"
 
 # Shared package logger; modules use logging.getLogger(__name__).
-ROOT_NAME = "paperwriter"
+ROOT_NAME = "paperhid"
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
@@ -30,15 +30,15 @@ def setup_logging(verbose: bool = True, debug: bool = False) -> logging.Logger:
     root.setLevel(level)
 
     # Avoid duplicate handlers if re-entered
-    if not any(getattr(h, "_paperwriter_console", False) for h in root.handlers):
+    if not any(getattr(h, "_paperhid_console", False) for h in root.handlers):
         handler = logging.StreamHandler(sys.stderr)
         handler.setLevel(level)
         handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
-        handler._paperwriter_console = True  # type: ignore[attr-defined]
+        handler._paperhid_console = True  # type: ignore[attr-defined]
         root.addHandler(handler)
     else:
         for h in root.handlers:
-            if getattr(h, "_paperwriter_console", False):
+            if getattr(h, "_paperhid_console", False):
                 h.setLevel(level)
 
     # Keep noisy third-party libs quieter unless full debug

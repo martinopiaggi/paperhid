@@ -12,36 +12,7 @@ from backend import bluetooth, config, layout_patcher, service
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 log = logging.getLogger(__name__)
 
-KEYBOARD_LAYOUTS = [
-    ("US English", "us"),
-    ("US International", "us_intl"),
-    ("UK English", "uk"),
-    ("German", "de"),
-    ("French", "fr"),
-    ("Canadian French", "fr_ca"),
-    ("Spanish", "es"),
-    ("Italian", "it"),
-    ("Portuguese", "pt"),
-    ("Brazilian", "br"),
-    ("Dutch", "nl"),
-    ("Swedish", "sv"),
-    ("Norwegian", "no"),
-    ("Danish", "dk"),
-    ("Finnish", "fi"),
-    ("Icelandic", "is"),
-    ("Swiss German", "de_ch"),
-    ("Swiss French", "fr_ch"),
-    ("Belgian", "be"),
-    ("Russian", "ru"),
-    ("Ukrainian", "ua"),
-    ("Czech", "cz"),
-    ("Hungarian", "hu"),
-    ("Turkish", "tr"),
-    ("Greek", "gr"),
-    ("Hebrew", "he"),
-]
-
-LAYOUT_MAP = dict(KEYBOARD_LAYOUTS)
+from shared.layouts import KEYBOARD_LAYOUTS, LAYOUT_MAP
 
 
 class Backend:

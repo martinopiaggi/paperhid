@@ -15,7 +15,31 @@ from shared.constants import (
 )
 from shared.transport import Transport
 
-log = logging.getLogger("paperwriter.bluetooth")
+log = logging.getLogger("paperhid.bluetooth")
+
+# Strict Bluetooth address: only this form is interpolated into root shell cmds.
+_MAC_COLON = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+_MAC_DASH = re.compile(r"^([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}$")
+_MAC_COMPACT = re.compile(r"^[0-9A-Fa-f]{12}$")
+
+
+def normalize_mac(mac: str) -> str:
+    """Return ``AA:BB:CC:DD:EE:FF`` or raise ``ValueError`` for unsafe input.
+
+    Accepts colon, dash, or 12-hex compact forms. Rejects everything else so
+    callers never interpolate free-form strings into root shell commands.
+    """
+    if mac is None:
+        raise ValueError("Bluetooth MAC required")
+    raw = str(mac).strip().replace(" ", "")
+    if _MAC_COLON.match(raw):
+        return raw.upper()
+    if _MAC_DASH.match(raw):
+        return raw.replace("-", ":").upper()
+    if _MAC_COMPACT.match(raw):
+        return ":".join(raw[i : i + 2] for i in range(0, 12, 2)).upper()
+    raise ValueError(f"invalid Bluetooth MAC: {mac!r}")
+
 
 _NXP_HINT = (
     "Paper Pro BT controller often sticks after sleep (NXP btnxpuart power-save).\n"
@@ -392,6 +416,7 @@ def scan_devices(t: Transport, timeout=15, gate_wifi=True):
 
 
 def pair(t: Transport, mac):
+    mac = normalize_mac(mac)
     out, err, code = t.run(f"bluetoothctl pair {mac}", timeout=30)
     if code != 0 and "alreadyexists" not in (out + err).lower().replace(" ", ""):
         raise RuntimeError(f"Pair failed: {err or out}")
@@ -399,6 +424,7 @@ def pair(t: Transport, mac):
 
 
 def trust(t: Transport, mac):
+    mac = normalize_mac(mac)
     out, err, code = t.run(f"bluetoothctl trust {mac}", timeout=10)
     if code != 0:
         raise RuntimeError(f"Trust failed: {err or out}")
@@ -406,10 +432,12 @@ def trust(t: Transport, mac):
 
 
 def remove(t: Transport, mac):
+    mac = normalize_mac(mac)
     t.run(f"bluetoothctl remove {mac}", timeout=10)
 
 
 def connect(t: Transport, mac):
+    mac = normalize_mac(mac)
     out, err, code = t.run(f"bluetoothctl connect {mac}", timeout=20)
     if code != 0:
         raise RuntimeError(f"Connect failed: {err or out}")
@@ -417,11 +445,13 @@ def connect(t: Transport, mac):
 
 
 def get_connection_status(t: Transport, mac):
+    mac = normalize_mac(mac)
     out, _, _ = t.run(f"bluetoothctl info {mac}", timeout=10)
     return any("Connected:" in ln and "yes" in ln.lower() for ln in out.splitlines())
 
 
 def get_device_name(t: Transport, mac):
+    mac = normalize_mac(mac)
     try:
         out, _, _ = t.run(f"bluetoothctl info {mac}", timeout=5)
         for line in out.splitlines():
@@ -434,6 +464,7 @@ def get_device_name(t: Transport, mac):
 
 
 def device_known(t: Transport, mac):
+    mac = normalize_mac(mac)
     out, _, _ = t.run(f"bluetoothctl info {mac} 2>&1", timeout=10)
     if not out or "not available" in out.lower() or "no default controller" in out.lower():
         return False
@@ -445,6 +476,7 @@ def _strip_ansi(text):
 
 
 def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=60):
+    mac = normalize_mac(mac)
     log.info("pair_interactive %s", mac)
     session = t.open_pty("bluetoothctl")
     transcript = []
@@ -542,10 +574,12 @@ def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=60):
 def pair_and_connect(
     t: Transport, mac, old_mac=None, passkey_callback=None, pre_scan=True
 ):
-    mac = mac.strip().upper()
+    mac = normalize_mac(mac)
     log.info("pair_and_connect %s", mac)
-    if old_mac and old_mac.lower() != mac.lower():
-        remove(t, old_mac)
+    if old_mac:
+        old_norm = normalize_mac(old_mac)
+        if old_norm != mac:
+            remove(t, old_norm)
 
     ensure_adapter_ready(t, timeout=25, gate_wifi=False)
 
@@ -625,9 +659,13 @@ def read_device_keyboard(t: Transport):
                 if not m:
                     continue
                 mac, name = m.group(1), m.group(2).strip()
+                try:
+                    mac = normalize_mac(mac)
+                except ValueError:
+                    continue
                 info, _, _ = t.run(f"bluetoothctl info {mac}", timeout=5)
                 if "input-keyboard" in info or "00001812" in info.lower():
-                    t.write_text(KEYBOARD_MAC_PATH, mac.strip().upper() + "\n")
+                    t.write_text(KEYBOARD_MAC_PATH, mac + "\n")
                     return mac, name
     except Exception:
         pass
@@ -644,6 +682,7 @@ def reconnect_now(t: Transport, mac=None):
             mac = ""
     if not mac:
         raise RuntimeError("No keyboard MAC saved")
+    mac = normalize_mac(mac)
     if get_connection_status(t, mac):
         return {"mac": mac, "connected": True}
     t.run(

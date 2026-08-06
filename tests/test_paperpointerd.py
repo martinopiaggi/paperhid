@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path  # noqa: F401 — used by style-file test
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DAEMON_PATH = ROOT / "device" / "paperpointerd.py"
@@ -201,16 +202,23 @@ class TestDefaultConf(unittest.TestCase):
     def test_normalize_and_write_cursor_style_file(self):
         self.assertEqual(pp.normalize_cursor_style("win95"), "win95")
         self.assertEqual(pp.normalize_cursor_style("nope"), "cross")
+        import ppd.constants as ppd_const
+
         with tempfile.TemporaryDirectory() as tmp:
             style_path = Path(tmp) / "cursor_style"
-            old_home = pp.HOME
-            old_path = pp.CURSOR_STYLE_PATH
+            old_home = ppd_const.HOME
+            old_path = ppd_const.CURSOR_STYLE_PATH
             try:
+                ppd_const.HOME = tmp
+                ppd_const.CURSOR_STYLE_PATH = str(style_path)
+                # Keep facade names in sync for anything still reading them.
                 pp.HOME = tmp
                 pp.CURSOR_STYLE_PATH = str(style_path)
                 self.assertEqual(pp.write_cursor_style_file("win95"), "win95")
                 self.assertEqual(style_path.read_text(encoding="ascii").strip(), "win95")
             finally:
+                ppd_const.HOME = old_home
+                ppd_const.CURSOR_STYLE_PATH = old_path
                 pp.HOME = old_home
                 pp.CURSOR_STYLE_PATH = old_path
 
@@ -1070,42 +1078,136 @@ class TestKeyStateRecovery(unittest.TestCase):
         )
 
 
+def _daemon_source_files() -> list[Path]:
+    """Shipped daemon entry + split responsibility modules under device/ppd/."""
+    files = [DAEMON_PATH]
+    ppd_dir = ROOT / "device" / "ppd"
+    if ppd_dir.is_dir():
+        files.extend(sorted(ppd_dir.glob("*.py")))
+    return files
+
+
 class TestNoPhysicalMarkerWrites(unittest.TestCase):
     """The daemon may classify the marker, but must never open it for writes."""
 
     def test_no_marker_cleanup_or_write_capable_marker_open(self):
-        src = DAEMON_PATH.read_text(encoding="utf-8")
-        tree = ast.parse(src)
-
         self.assertFalse(hasattr(pp, "clear_stuck_marker"))
-        self.assertNotIn("cleared marker state", src.lower())
+        for path in _daemon_source_files():
+            src = path.read_text(encoding="utf-8")
+            self.assertNotIn("cleared marker state", src.lower(), path.name)
+            tree = ast.parse(src)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or len(node.args) < 2:
+                    continue
+                func = node.func
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "open"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "os"
+                ):
+                    continue
+                target = ast.unparse(node.args[0]).lower()
+                flags = ast.unparse(node.args[1])
+                self.assertNotIn("marker", target, path.name)
+                self.assertNotIn("O_RDWR", flags, path.name)
 
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or len(node.args) < 2:
-                continue
-            func = node.func
-            if not (
-                isinstance(func, ast.Attribute)
-                and func.attr == "open"
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "os"
-            ):
-                continue
-            target = ast.unparse(node.args[0]).lower()
-            flags = ast.unparse(node.args[1])
-            self.assertNotIn("marker", target)
-            self.assertNotIn("O_RDWR", flags)
+
+class TestRunLoopShipped(unittest.TestCase):
+    """Drive shipped run_loop far enough to catch missing imports (e.g. KeyboardPresence)."""
+
+    def test_run_loop_constructs_keyboard_presence_without_nameerror(self):
+        """Shipped run_loop must bind KeyboardPresence (import regression)."""
+        import ppd.loop as loop_mod
+
+        self.assertTrue(
+            hasattr(loop_mod, "KeyboardPresence"),
+            "ppd.loop must import KeyboardPresence for run_loop",
+        )
+        # Facade re-exports the same class used by the loop module.
+        self.assertIs(pp.KeyboardPresence, loop_mod.KeyboardPresence)
+
+        class FakeTouch:
+            def __init__(self, x_max, y_max):
+                self.x = int(x_max) // 2
+                self.y = int(y_max) // 2
+                self.down = False
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+            def contact(self, _down):
+                return None
+
+            def move(self, _x, _y):
+                return None
+
+        class FakeKb:
+            instances: list = []
+
+            def __init__(self):
+                FakeKb.instances.append(self)
+                self.closed = False
+
+            def sync(self, want=None):
+                return None
+
+            def close(self):
+                self.closed = True
+
+        class FakeOrient:
+            def __init__(self, *args, **kwargs):
+                self.source = "test"
+
+            def get(self, force=False):
+                return 0
+
+            def close(self):
+                return None
+
+        FakeKb.instances = []
+        cfg = pp.default_conf()
+        cfg["cursor"] = 0
+        cfg["orientation"] = 0  # fixed; no background watcher
+
+        iterations = {"n": 0}
+
+        def open_then_stop(_cfg):
+            iterations["n"] += 1
+            if iterations["n"] >= 2:
+                raise KeyboardInterrupt()
+            return []
+
+        # Patch names inside the shipped loop module — that is what run_loop uses.
+        with patch.object(loop_mod, "TouchClick", FakeTouch):
+            with patch.object(loop_mod, "KeyboardPresence", FakeKb):
+                with patch.object(loop_mod, "UiOrientation", FakeOrient):
+                    with patch.object(
+                        loop_mod, "open_sources", side_effect=open_then_stop
+                    ):
+                        with patch.object(loop_mod.time, "sleep", return_value=None):
+                            try:
+                                loop_mod.run_loop(cfg)
+                            except KeyboardInterrupt:
+                                pass
+
+        self.assertEqual(len(FakeKb.instances), 1)
+        self.assertTrue(
+            FakeKb.instances[0].closed,
+            "run_loop finally must close KeyboardPresence",
+        )
 
 
 class TestTouchConversionBoundary(unittest.TestCase):
     """Regression: no rotation before conversion; no second rotation after."""
 
     def test_run_loop_routes_touch_through_single_wrapper(self):
-        src = DAEMON_PATH.read_text(encoding="utf-8")
-        # Locate run_loop body only.
+        # run_loop lives in the loop responsibility module after the split.
+        loop_path = ROOT / "device" / "ppd" / "loop.py"
+        src = loop_path.read_text(encoding="utf-8")
         start = src.index("def run_loop(")
-        end = src.index("\ndef cmd_list(")
-        body = src[start:end]
+        body = src[start:]
         self.assertIn("def move_touch_to_cursor(", body)
         self.assertIn("logical_to_physical(", body)
         # Direct physical injection must not remain for synthetic UI gestures.

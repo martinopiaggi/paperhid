@@ -14,6 +14,7 @@ from core import (
 from core import device as device_mod
 from core.logutil import get_logger
 from core.service_installer import save_keyboard_mac
+from shared.layouts import KEYBOARD_LAYOUTS, LAYOUT_MAP, LAYOUT_NAMES
 
 log = get_logger("ui")
 
@@ -26,20 +27,6 @@ DOT_COLORS = {
     ERROR: styles.ERROR,
 }
 PAD_X = 24
-
-KEYBOARD_LAYOUTS = [
-    ("US English", "us"), ("US International", "us_intl"), ("UK English", "uk"),
-    ("German", "de"), ("French", "fr"), ("Canadian French", "fr_ca"),
-    ("Spanish", "es"), ("Italian", "it"), ("Portuguese", "pt"),
-    ("Brazilian", "br"), ("Dutch", "nl"), ("Swedish", "sv"),
-    ("Norwegian", "no"), ("Danish", "dk"), ("Finnish", "fi"),
-    ("Icelandic", "is"), ("Swiss German", "de_ch"), ("Swiss French", "fr_ch"),
-    ("Belgian", "be"), ("Russian", "ru"), ("Ukrainian", "ua"),
-    ("Czech", "cz"), ("Hungarian", "hu"), ("Turkish", "tr"),
-    ("Greek", "gr"), ("Hebrew", "he"),
-]
-LAYOUT_NAMES = [n for n, _ in KEYBOARD_LAYOUTS]
-LAYOUT_MAP = dict(KEYBOARD_LAYOUTS)
 
 _LAYOUT_HINT = (
     "Like Windows layout switching: pick Italian and a US keyboard types "

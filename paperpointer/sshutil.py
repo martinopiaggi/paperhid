@@ -19,30 +19,16 @@ ENABLE_LINK_ETC = f"/etc/systemd/system/multi-user.target.wants/{UNIT_NAME}"
 
 def password_from_env(cli_password: str | None = None) -> str:
     """Resolve SSH password (CLI first; see core.credentials)."""
-    try:
-        from core.credentials import require_password
+    from core.credentials import require_password
 
+    try:
         return require_password(cli_password)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    except ImportError:
-        if cli_password:
-            return cli_password
-        for key in (
-            "PAPERHID_PASSWORD",
-            "PAPERWRITER_PASSWORD",
-            "PAPERPOINTER_PASSWORD",
-            "MOVEWRITER_PASSWORD",
-        ):
-            v = os.environ.get(key)
-            if v:
-                return v
-        raise SystemExit(
-            "SSH password required. Pass --password or set PAPERHID_PASSWORD."
-        )
 
 
 def connect(host: str, password: str, user: str = DEFAULT_USER) -> paramiko.SSHClient:
+    """Open a raw Paramiko client (pointer handlers). One transport style for pointer ops."""
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     c.connect(

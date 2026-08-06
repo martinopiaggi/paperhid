@@ -5,8 +5,6 @@ Never prints the password. Does not write it unless --save-password.
 """
 from __future__ import annotations
 
-import argparse
-import os
 import sys
 
 from core.ssh_client import SSHClient
@@ -279,66 +277,3 @@ def cmd_diagnose(args):
             return 0 if ok else 2
         return 0
     return _with_ssh(args, run)
-
-
-def build_parser():
-    p = argparse.ArgumentParser(description="PaperHid keyboard CLI (reMarkable Paper Pro)")
-    p.add_argument("--ip", default=None)
-    p.add_argument("--password", default=None)
-    p.add_argument("--save-password", action="store_true")
-    p.add_argument("--timeout", type=int, default=15)
-    sub = p.add_subparsers(dest="command", required=True)
-
-    sub.add_parser("detect")
-    sp = sub.add_parser("ssh")
-    sp.add_argument("remote_cmd", nargs="?", default="uname -a")
-    sp = sub.add_parser("install-service")
-    sp.add_argument("--wait", type=int, default=12)
-    sub.add_parser("uninstall-service")
-    sub.add_parser("status")
-    sp = sub.add_parser("scan")
-    sp.add_argument("--scan-timeout", type=int, default=22)
-    sp = sub.add_parser("pair")
-    sp.add_argument("--mac", default=None)
-    sp.add_argument("--name", default="")
-    sp.add_argument("--scan-timeout", type=int, default=22)
-    sp = sub.add_parser("save-mac")
-    sp.add_argument("--mac", required=True)
-    sp.add_argument("--name", default="")
-    sp = sub.add_parser("unpair")
-    sp.add_argument("--mac", default=None)
-    sub.add_parser("refuse-layout")
-    sub.add_parser("refuse-native")
-    sp = sub.add_parser("diagnose")
-    sp.add_argument("--probe-scan", action="store_true")
-    return p
-
-
-def main(argv=None):
-    args = build_parser().parse_args(argv)
-    handlers = {
-        "detect": cmd_detect,
-        "ssh": cmd_ssh,
-        "install-service": cmd_install_service,
-        "uninstall-service": cmd_uninstall_service,
-        "status": cmd_status,
-        "scan": cmd_scan,
-        "pair": cmd_pair,
-        "save-mac": cmd_save_mac,
-        "unpair": cmd_unpair,
-        "refuse-layout": cmd_refuse_layout,
-        "refuse-native": cmd_refuse_native,
-        "diagnose": cmd_diagnose,
-    }
-    try:
-        return handlers[args.command](args)
-    except CliError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return e.code
-    except Exception as e:
-        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main() or 0)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import shlex
 import sys
 from pathlib import Path
 
@@ -13,8 +14,6 @@ from paperpointer.sshutil import (
     UNIT_ETC,
     UNIT_NAME,
     UNIT_USR,
-    connect,
-    password_from_env,
     put_file_atomic,
     put_tree,
     run,
@@ -22,9 +21,16 @@ from paperpointer.sshutil import (
 
 ROOT = Path(__file__).resolve().parent.parent
 DEVICE_DIR = ROOT / "device"
+PPD_DIR = DEVICE_DIR / "ppd"
 CURSOR_RATE_MAX = 40
 CURSOR_STYLES = ("cross", "win95")
 SETTINGS_UI_READY = "paperpointer-settings-qml-3.28.0.164"
+
+# Staged deploy paths — never write live ppd/ before a validated swap.
+DAEMON_LIVE = f"{REMOTE_HOME}/paperpointerd.py"
+DAEMON_CANDIDATE = f"{REMOTE_HOME}/paperpointerd.py.candidate"
+PPD_LIVE = f"{REMOTE_HOME}/ppd"
+PPD_NEXT = f"{REMOTE_HOME}/ppd.next"
 
 
 def _out(text: str) -> None:
@@ -32,6 +38,175 @@ def _out(text: str) -> None:
         sys.stdout.write(text)
     except UnicodeEncodeError:
         sys.stdout.buffer.write(text.encode("utf-8", errors="replace"))
+
+
+def put_daemon_sources(
+    c,
+    *,
+    daemon_remote: str | None = None,
+    ppd_remote: str | None = None,
+) -> tuple[str, str]:
+    """Stage facade + ``ppd/`` to candidate paths (not the live tree).
+
+    Returns ``(daemon_candidate, ppd_next)``. Callers must activate via
+    :func:`activate_daemon_sources` so both paths swap/rollback together.
+    Writing live ``ppd/`` before a facade swap can leave old facade + new modules.
+    """
+    remote_daemon = daemon_remote or DAEMON_CANDIDATE
+    remote_ppd = ppd_remote or PPD_NEXT
+    if not PPD_DIR.is_dir():
+        raise FileNotFoundError(f"missing daemon package: {PPD_DIR}")
+    put_file_atomic(c, DEVICE_DIR / "paperpointerd.py", remote_daemon, 0o755)
+    # Fresh staging dir so deleted modules cannot linger from a prior upload.
+    run(c, f"rm -rf -- {shlex.quote(remote_ppd)}")
+    put_tree(c, PPD_DIR, remote_ppd)
+    return remote_daemon, remote_ppd
+
+
+def activate_daemon_sources(
+    c,
+    *,
+    daemon_candidate: str | None = None,
+    ppd_candidate: str | None = None,
+    cursor_hz: int | None = None,
+    restart: bool = True,
+    require_installed: bool = True,
+) -> int:
+    """Validate staged facade+ppd, swap both live, joint rollback on failure.
+
+    Optional ``cursor_hz`` updates ``pointer.conf`` in the same armed transaction.
+    """
+    daemon_cand = daemon_candidate or DAEMON_CANDIDATE
+    ppd_cand = ppd_candidate or PPD_NEXT
+    conf = f"{REMOTE_HOME}/pointer.conf"
+    hz_assert = ""
+    conf_update = ""
+    if cursor_hz is not None:
+        hz = max(1, min(CURSOR_RATE_MAX, int(cursor_hz)))
+        # Single quotes: this line is embedded in a double-quoted shell -c string.
+        hz_assert = f"assert n.get('CURSOR_HZ_MAX', 0) >= {hz}\n"
+        conf_update = f"""
+if grep -q '^cursor_hz=' "$CONF"; then
+  sed -i 's/^cursor_hz=.*/cursor_hz={hz}/' "$CONF"
+else
+  echo 'cursor_hz={hz}' >> "$CONF"
+fi
+"""
+    require_block = ""
+    if require_installed:
+        # Pre-split installs may lack live ppd/; staged swap still installs it.
+        require_block = """
+[ -f "$DAEMON" ] || { echo 'ERROR: daemon not installed' >&2; exit 2; }
+"""
+    if cursor_hz is not None:
+        require_block += """
+[ -f "$CONF" ] || { echo 'ERROR: pointer.conf not installed' >&2; exit 2; }
+"""
+    restart_block = ""
+    if restart:
+        restart_block = f"""
+systemctl restart {UNIT_NAME}
+sleep 2
+systemctl is-active --quiet {UNIT_NAME}
+PID=$(systemctl show -p MainPID --value {UNIT_NAME})
+[ "${{PID:-0}}" -gt 0 ] && [ -d "/proc/$PID" ]
+echo "paperpointer pid=$PID"
+"""
+    conf_check = ""
+    if cursor_hz is not None:
+        conf_check = f"""
+/opt/bin/python3 -c 'import runpy; n=runpy.run_path("{DAEMON_LIVE}"); assert n["load_conf"]("{conf}")["cursor_hz"] == {int(cursor_hz)}'
+grep '^cursor_hz=' "$CONF"
+"""
+
+    script = f"""
+set -eu
+DAEMON={shlex.quote(DAEMON_LIVE)}
+CANDIDATE={shlex.quote(daemon_cand)}
+PPD={shlex.quote(PPD_LIVE)}
+PPD_NEXT={shlex.quote(ppd_cand)}
+CONF={shlex.quote(conf)}
+OLD_DAEMON="$DAEMON.rollback.$$"
+OLD_PPD="$PPD.rollback.$$"
+OLD_CONF="$CONF.rollback.$$"
+VAL={shlex.quote(REMOTE_HOME)}/.daemon-validate.$$
+ARMED=0
+HAD_PPD=0
+HAD_CONF=0
+
+rollback() {{
+  code=$?
+  trap - EXIT HUP INT TERM
+  set +e
+  if [ "$ARMED" -eq 1 ]; then
+    if [ -f "$OLD_DAEMON" ]; then
+      mv -f "$OLD_DAEMON" "$DAEMON"
+    fi
+    # Always drop partially swapped live ppd; restore prior tree if we had one.
+    rm -rf "$PPD"
+    if [ "$HAD_PPD" -eq 1 ] && [ -d "$OLD_PPD" ]; then
+      mv -f "$OLD_PPD" "$PPD"
+    fi
+    if [ "$HAD_CONF" -eq 1 ] && [ -f "$OLD_CONF" ]; then
+      mv -f "$OLD_CONF" "$CONF"
+    fi
+    systemctl restart {UNIT_NAME} >/dev/null 2>&1 || true
+  fi
+  rm -rf "$VAL" "$CANDIDATE" "$PPD_NEXT" "$OLD_DAEMON" "$OLD_PPD" "$OLD_CONF"
+  exit "$code"
+}}
+trap rollback EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+[ -f "$CANDIDATE" ] || {{ echo 'ERROR: daemon candidate missing' >&2; exit 2; }}
+[ -d "$PPD_NEXT" ] || {{ echo 'ERROR: ppd.next package missing' >&2; exit 2; }}
+{require_block}
+
+# Validate facade against the staged package (not live ppd/).
+rm -rf "$VAL"
+mkdir -p "$VAL"
+cp -p "$CANDIDATE" "$VAL/paperpointerd.py"
+ln -sfn "$PPD_NEXT" "$VAL/ppd"
+/opt/bin/python3 -c "
+import runpy
+n = runpy.run_path('$VAL/paperpointerd.py')
+assert 'load_conf' in n
+assert 'CURSOR_HZ_MAX' in n
+{hz_assert}"
+
+if [ -f "$DAEMON" ]; then
+  cp -p "$DAEMON" "$OLD_DAEMON"
+fi
+if [ -d "$PPD" ]; then
+  HAD_PPD=1
+  rm -rf "$OLD_PPD"
+  mv "$PPD" "$OLD_PPD"
+fi
+if [ -f "$CONF" ]; then
+  HAD_CONF=1
+  cp -p "$CONF" "$OLD_CONF"
+fi
+
+ARMED=1
+mv -f "$CANDIDATE" "$DAEMON"
+chmod 0755 "$DAEMON"
+mv -f "$PPD_NEXT" "$PPD"
+{conf_update}
+{restart_block}
+{conf_check}
+
+ARMED=0
+rm -rf "$VAL" "$OLD_DAEMON" "$OLD_PPD" "$OLD_CONF"
+trap - EXIT HUP INT TERM
+echo "OK: daemon + ppd activated"
+"""
+    out, err, code = run(c, script, timeout=45)
+    _out(out)
+    if err.strip():
+        sys.stderr.write(err)
+    return code
 
 
 def cmd_detect(c) -> int:
@@ -65,8 +240,8 @@ if [ -n "$XO" ]; then
   ps w | grep "^ *$XO " | head -n 1
   echo '-- preload --'
   tr '\\0' '\\n' < "/proc/$XO/environ" 2>/dev/null | grep -E '^(LD_PRELOAD|QT_|QML_)' || true
-  echo '-- cursor-related maps --'
-  grep -E 'xovi|pp-cursor|framebuffer-spy' "/proc/$XO/maps" 2>/dev/null || true
+  echo '-- xovi-related maps --'
+  grep -E 'xovi' "/proc/$XO/maps" 2>/dev/null || true
 fi
 echo '=== xovi ==='
 ls -la /home/root/xovi /home/root/xovi/extensions.d /home/root/xovi/inactive-extensions 2>&1
@@ -101,7 +276,7 @@ for t in readelf objdump nm strings gdb gdbserver; do
   command -v "$t" || true
 done
 echo '=== recent cursor log ==='
-logread 2>/dev/null | grep -iE 'paperpointer|commandexecutor|qml|pp-cursor|framebuffer-spy|xovi' | tail -n 160 || true
+logread 2>/dev/null | grep -iE 'paperpointer|commandexecutor|qml|xovi' | tail -n 160 || true
 journalctl -u xochitl --no-pager -n 300 2>/dev/null | grep -iE 'paperpointer|commandexecutor|qml|error|xovi' | tail -n 160 || true
 """
     out, err, code = run(c, script, timeout=45)
@@ -395,7 +570,7 @@ def cmd_restart(c) -> int:
 
 
 def cmd_cursor_style(c, style: str) -> int:
-    """Upload skins, set cursor_style via allow-listed script, restart daemon."""
+    """Upload skins, activate staged daemon+ppd, set style via allow-listed script."""
     style = (style or "").strip().lower()
     if style not in CURSOR_STYLES:
         print(f"style must be one of: {', '.join(CURSOR_STYLES)}", file=sys.stderr)
@@ -406,21 +581,27 @@ def cmd_cursor_style(c, style: str) -> int:
     if not script.is_file() or not lib.is_file():
         print("missing ui-actions for cursor-style", file=sys.stderr)
         return 2
-    run(c, f"mkdir -p {REMOTE_HOME}/ui-actions {REMOTE_HOME}/cursors")
+    ui_bin = DEVICE_DIR / "paperhid-ui"
+    paperhid_home = "/home/root/.paperhid"
+    run(c, f"mkdir -p {REMOTE_HOME}/ui-actions {REMOTE_HOME}/cursors {paperhid_home}")
     put_file_atomic(c, lib, f"{REMOTE_HOME}/ui-actions/lib.sh", 0o755)
     put_file_atomic(c, script, f"{REMOTE_HOME}/ui-actions/set-cursor-style.sh", 0o755)
+    if ui_bin.is_file():
+        put_file_atomic(c, ui_bin, f"{paperhid_home}/paperhid-ui", 0o755)
     if cursors.is_dir():
         for path in sorted(cursors.iterdir()):
             if path.is_file() and path.name != "README.md":
                 put_file_atomic(c, path, f"{REMOTE_HOME}/cursors/{path.name}", 0o644)
-    put_file_atomic(
-        c, DEVICE_DIR / "paperpointerd.py", f"{REMOTE_HOME}/paperpointerd.py", 0o755
-    )
+    put_daemon_sources(c)
+    # Style path restarts the daemon after conf write (via paperhid-ui).
+    act = activate_daemon_sources(c, restart=False)
+    if act != 0:
+        return act
     out, err, code = run(
         c,
-        f"sed -i 's/\\r$//' {REMOTE_HOME}/ui-actions/*.sh; "
-        f"chmod 755 {REMOTE_HOME}/ui-actions/*.sh; "
-        f"{REMOTE_HOME}/ui-actions/set-cursor-style.sh {style}",
+        f"sed -i 's/\\r$//' {paperhid_home}/paperhid-ui {REMOTE_HOME}/ui-actions/*.sh 2>/dev/null; "
+        f"chmod 755 {paperhid_home}/paperhid-ui {REMOTE_HOME}/ui-actions/*.sh; "
+        f"{paperhid_home}/paperhid-ui set-cursor-style {style}",
         timeout=30,
     )
     _out(out)
@@ -430,72 +611,10 @@ def cmd_cursor_style(c, style: str) -> int:
 
 
 def cmd_cursor_rate(c, hz: int) -> int:
-    """Transactionally deploy the daemon, change its rate, and restart it."""
+    """Stage facade+ppd, validate, swap both, set rate, restart (joint rollback)."""
     hz = max(1, min(CURSOR_RATE_MAX, int(hz)))
-    candidate = f"{REMOTE_HOME}/paperpointerd.py.candidate"
-    put_file_atomic(
-        c,
-        DEVICE_DIR / "paperpointerd.py",
-        candidate,
-        0o755,
-    )
-    script = f"""
-set -eu
-DAEMON={REMOTE_HOME}/paperpointerd.py
-CANDIDATE={candidate}
-CONF={REMOTE_HOME}/pointer.conf
-OLD_DAEMON="$DAEMON.rollback.$$"
-OLD_CONF="$CONF.rollback.$$"
-ARMED=0
-
-rollback() {{
-  code=$?
-  trap - EXIT HUP INT TERM
-  set +e
-  if [ "$ARMED" -eq 1 ]; then
-    mv -f "$OLD_DAEMON" "$DAEMON"
-    mv -f "$OLD_CONF" "$CONF"
-    systemctl restart {UNIT_NAME} >/dev/null 2>&1
-  fi
-  rm -f "$CANDIDATE" "$OLD_DAEMON" "$OLD_CONF"
-  exit "$code"
-}}
-trap rollback EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-[ -f "$DAEMON" ] || {{ echo 'ERROR: daemon not installed' >&2; exit 2; }}
-[ -f "$CONF" ] || {{ echo 'ERROR: pointer.conf not installed' >&2; exit 2; }}
-/opt/bin/python3 -c 'import runpy; n=runpy.run_path("{candidate}"); assert n["CURSOR_HZ_MAX"] >= {hz}'
-cp -p "$DAEMON" "$OLD_DAEMON"
-cp -p "$CONF" "$OLD_CONF"
-ARMED=1
-mv -f "$CANDIDATE" "$DAEMON"
-chmod 0755 "$DAEMON"
-if grep -q '^cursor_hz=' "$CONF"; then
-  sed -i 's/^cursor_hz=.*/cursor_hz={hz}/' "$CONF"
-else
-  echo 'cursor_hz={hz}' >> "$CONF"
-fi
-systemctl restart {UNIT_NAME}
-sleep 2
-systemctl is-active --quiet {UNIT_NAME}
-/opt/bin/python3 -c 'import runpy; n=runpy.run_path("{REMOTE_HOME}/paperpointerd.py"); assert n["load_conf"]("{REMOTE_HOME}/pointer.conf")["cursor_hz"] == {hz}'
-PID=$(systemctl show -p MainPID --value {UNIT_NAME})
-[ "${{PID:-0}}" -gt 0 ] && [ -d "/proc/$PID" ]
-
-ARMED=0
-rm -f "$OLD_DAEMON" "$OLD_CONF"
-trap - EXIT HUP INT TERM
-grep '^cursor_hz=' "$CONF"
-echo "paperpointer pid=$PID"
-"""
-    out, err, code = run(c, script, timeout=30)
-    _out(out)
-    if err.strip():
-        sys.stderr.write(err)
-    return code
+    put_daemon_sources(c)
+    return activate_daemon_sources(c, cursor_hz=hz, restart=True)
 
 
 def cmd_input_monitor(c, seconds: int) -> int:
@@ -586,22 +705,6 @@ def cmd_watch(c) -> int:
     return 0
 
 
-def cmd_enable_fb(c) -> int:
-    """Load XOVI + framebuffer-spy (no AppLoad, no pp-cursor). Restarts xochitl."""
-    put_tree(c, DEVICE_DIR, REMOTE_HOME, preserve_existing={"pointer.conf"})
-    out, err, code = run(
-        c,
-        f"sed -i 's/\\r$//' {REMOTE_HOME}/enable_fb_spy.sh; "
-        f"chmod 755 {REMOTE_HOME}/enable_fb_spy.sh; "
-        f"{REMOTE_HOME}/enable_fb_spy.sh",
-        timeout=120,
-    )
-    _out(out)
-    if err.strip():
-        sys.stderr.write(err[:2000])
-    return code
-
-
 def cmd_enable_cursor(c) -> int:
     """Install and health-check the version-locked XOVI QML cursor."""
     put_tree(c, DEVICE_DIR, REMOTE_HOME, preserve_existing={"pointer.conf"})
@@ -622,18 +725,23 @@ def cmd_enable_settings_ui(c) -> int:
     """Install and canary the optional Settings > Help controls."""
     qmd = DEVICE_DIR / "paperpointer-settings.qmd"
     installer = DEVICE_DIR / "enable_settings_ui.sh"
+    ui_bin = DEVICE_DIR / "paperhid-ui"
     ui_actions = DEVICE_DIR / "ui-actions"
     cursors = DEVICE_DIR / "cursors"
-    if not qmd.is_file() or not installer.is_file() or not ui_actions.is_dir():
+    paperhid_home = "/home/root/.paperhid"
+    if not qmd.is_file() or not installer.is_file() or not ui_bin.is_file():
         print("missing settings UI device files", file=sys.stderr)
         return 1
 
-    run(c, f"mkdir -p {REMOTE_HOME}/ui-actions {REMOTE_HOME}/cursors")
+    run(c, f"mkdir -p {paperhid_home} {REMOTE_HOME}/ui-actions {REMOTE_HOME}/cursors")
     put_file_atomic(c, qmd, f"{REMOTE_HOME}/paperpointer-settings.qmd", 0o644)
     put_file_atomic(c, installer, f"{REMOTE_HOME}/enable_settings_ui.sh", 0o755)
-    for path in ui_actions.iterdir():
-        if path.is_file():
-            put_file_atomic(c, path, f"{REMOTE_HOME}/ui-actions/{path.name}", 0o755)
+    put_file_atomic(c, ui_bin, f"{paperhid_home}/paperhid-ui", 0o755)
+    # Legacy thin wrappers still used by host CLI cursor-style path.
+    if ui_actions.is_dir():
+        for path in ui_actions.iterdir():
+            if path.is_file():
+                put_file_atomic(c, path, f"{REMOTE_HOME}/ui-actions/{path.name}", 0o755)
     if cursors.is_dir():
         for path in sorted(cursors.iterdir()):
             if path.is_file() and path.name != "README.md":
@@ -641,6 +749,8 @@ def cmd_enable_settings_ui(c) -> int:
 
     out, err, code = run(
         c,
+        f"sed -i 's/\\r$//' {paperhid_home}/paperhid-ui {REMOTE_HOME}/enable_settings_ui.sh; "
+        f"chmod 755 {paperhid_home}/paperhid-ui {REMOTE_HOME}/enable_settings_ui.sh; "
         f"{REMOTE_HOME}/enable_settings_ui.sh",
         timeout=120,
     )
@@ -747,7 +857,7 @@ if [ -f "$CURSOR_QMD" ] && [ -p "$CURSOR_PIPE" ]; then
   /opt/bin/python3 {REMOTE_HOME}/paperpointerd.py cursor-ping
 fi
 wait_for_stable_xochitl 15 45
-systemctl is-active --quiet {UNIT_NAME}
+# Pointer daemon is optional (keyboard-only installs have Settings without it).
 
 ARMED=0
 rm -f "$BACKUP"
@@ -788,23 +898,8 @@ PY
     return code
 
 
-def cmd_fb_config(c) -> int:
-    out, err, code = run(
-        c,
-        f"/opt/bin/python3 {REMOTE_HOME}/fb_cursor.py config 2>&1; "
-        f"echo ---; ls -la /dev/shm/pp-cursor 2>&1; "
-        f"xxd /dev/shm/pp-cursor 2>/dev/null | head -n 2; "
-        f"tr '\\0' '\\n' < /proc/$(ps w | grep '[x]ochitl --system' | awk '{{print $1}}' | head -n1)/environ 2>/dev/null | grep LD_PRELOAD || true",
-        timeout=20,
-    )
-    _out(out)
-    if err.strip():
-        sys.stderr.write(err[:1000])
-    return code
-
-
 def cmd_stock_ui(c) -> int:
-    """Disable the cursor transport and return to stock xochitl."""
+    """Remove only the cursor overlay; keep Settings > Help if installed."""
     script = f"""
 set -u
 QMD=/home/root/xovi/exthome/qt-resource-rebuilder/paperpointer-cursor.qmd
@@ -818,27 +913,44 @@ if [ -f {REMOTE_HOME}/pointer.conf ]; then
     WARN=1
   fi
 fi
-if ! systemctl restart {UNIT_NAME}; then
-  echo 'WARNING: PaperHid pointer daemon did not restart; continuing UI recovery' >&2
-  WARN=1
+if systemctl cat {UNIT_NAME} >/dev/null 2>&1; then
+  if ! systemctl restart {UNIT_NAME}; then
+    echo 'WARNING: PaperHid pointer daemon did not restart; continuing UI recovery' >&2
+    WARN=1
+  fi
 fi
-rm -f "$QMD" "$SETTINGS_QMD" "$FIFO" || WARN=1
+# Cursor overlay only — never delete the Settings panel QMD here.
+rm -f "$QMD" "$FIFO" || WARN=1
 
-if ! /home/root/xovi/stock >/tmp/paperpointer-stock-ui.log 2>&1; then
-  cat /tmp/paperpointer-stock-ui.log >&2 2>/dev/null || true
-  exit 4
+if [ -f "$SETTINGS_QMD" ]; then
+  # Keep XOVI tethered so Settings > Help continues to work.
+  systemctl reset-failed xochitl.service 2>/dev/null || true
+  if ! /home/root/xovi/start >/tmp/paperpointer-stock-ui.log 2>&1; then
+    cat /tmp/paperpointer-stock-ui.log >&2 2>/dev/null || true
+    exit 4
+  fi
+  sleep 4
+  XO=$(pidof xochitl 2>/dev/null | awk '{{print $1}}')
+  [ -n "$XO" ] || {{ echo 'ERROR: xochitl did not start after cursor remove' >&2; exit 5; }}
+  rm -f /tmp/paperpointer-stock-ui.log
+  echo "OK: cursor overlay removed; Settings UI preserved (xochitl pid=$XO)"
+else
+  if ! /home/root/xovi/stock >/tmp/paperpointer-stock-ui.log 2>&1; then
+    cat /tmp/paperpointer-stock-ui.log >&2 2>/dev/null || true
+    exit 4
+  fi
+  sleep 4
+  XO=$(pidof xochitl 2>/dev/null | awk '{{print $1}}')
+  [ -n "$XO" ] || {{ echo 'ERROR: stock xochitl did not start' >&2; exit 5; }}
+  if grep -q '/home/root/xovi/' "/proc/$XO/maps" 2>/dev/null; then
+    echo 'ERROR: xochitl still has XOVI mappings' >&2
+    exit 6
+  fi
+  rm -f /tmp/paperpointer-stock-ui.log
+  echo "OK: stock xochitl pid=$XO; cursor publisher disabled"
 fi
-sleep 4
-XO=$(pidof xochitl 2>/dev/null | awk '{{print $1}}')
-[ -n "$XO" ] || {{ echo 'ERROR: stock xochitl did not start' >&2; exit 5; }}
-if grep -q '/home/root/xovi/' "/proc/$XO/maps" 2>/dev/null; then
-  echo 'ERROR: xochitl still has XOVI mappings' >&2
-  exit 6
-fi
-rm -f /tmp/paperpointer-stock-ui.log
-echo "OK: stock xochitl pid=$XO; cursor publisher disabled"
 if [ "$WARN" -ne 0 ]; then
-  echo 'WARNING: stock UI recovered, but daemon cleanup needs attention' >&2
+  echo 'WARNING: cursor recovery finished, but daemon cleanup needs attention' >&2
 fi
 """
     out, err, code = run(
@@ -883,7 +995,7 @@ cat /proc/bus/input/devices
     return 0
 
 
-# Exact pointer command inventory (pin 4174a57 + monorepo preflight).
+# Supported pointer subcommands under ``python cli.py pointer …``.
 POINTER_SIMPLE_COMMANDS = (
     "detect",
     "probe",
@@ -895,12 +1007,10 @@ POINTER_SIMPLE_COMMANDS = (
     "restart",
     "watch",
     "reconnect",
-    "enable-fb",
     "enable-cursor",
     "enable-settings-ui",
     "disable-settings-ui",
     "settings-ui-check",
-    "fb-config",
     "stock-ui",
 )
 POINTER_ALL_COMMANDS = POINTER_SIMPLE_COMMANDS + (
@@ -998,8 +1108,6 @@ def dispatch_pointer(args, connection) -> int:
         return cmd_reconnect(connection)
     if cmd == "test-tap":
         return cmd_test_tap(connection, args.x, args.y)
-    if cmd == "enable-fb":
-        return cmd_enable_fb(connection)
     if cmd == "enable-cursor":
         return cmd_enable_cursor(connection)
     if cmd == "enable-settings-ui":
@@ -1008,17 +1116,16 @@ def dispatch_pointer(args, connection) -> int:
         return cmd_disable_settings_ui(connection)
     if cmd == "settings-ui-check":
         return cmd_settings_ui_check(connection)
-    if cmd == "fb-config":
-        return cmd_fb_config(connection)
     if cmd == "stock-ui":
         return cmd_stock_ui(connection)
     return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build a pointer-only parser (library/test helper; use ``cli.py pointer``)."""
     parent_shared = shared_flag_parser(for_subparser=False)
     p = argparse.ArgumentParser(
-        prog="paperpointer",
+        prog="python cli.py pointer",
         description="PaperHid pointer (mouse/touchpad -> touch)",
         parents=[parent_shared],
     )
@@ -1026,22 +1133,3 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     register_pointer_commands(sub, shared_flag_parser(for_subparser=True))
     return p
-
-
-def main(argv=None) -> int:
-    # Shared flags work before or after the subcommand:
-    #   paperpointer --password X reconnect
-    #   paperpointer reconnect --password X
-    p = build_parser()
-    args = p.parse_args(argv)
-    host = getattr(args, "host", None) or DEFAULT_HOST
-    password = password_from_env(getattr(args, "password", None))
-    c = connect(host, password)
-    try:
-        return dispatch_pointer(args, c)
-    finally:
-        c.close()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

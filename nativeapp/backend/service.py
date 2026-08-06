@@ -175,7 +175,9 @@ def uninstall():
 
 
 def save_keyboard_mac(mac):
-    Path(KEYBOARD_MAC_PATH).write_text((mac or "").strip().upper())
+    from shared.bluetooth import normalize_mac
+
+    Path(KEYBOARD_MAC_PATH).write_text(normalize_mac(mac))
 
 
 def clear_keyboard_mac():

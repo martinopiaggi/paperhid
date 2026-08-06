@@ -550,22 +550,6 @@ def build_parser() -> argparse.ArgumentParser:
     ug.add_argument("--pointer", action="store_true")
     ug.add_argument("--all", action="store_true")
 
-    isvc = sub.add_parser(
-        "install-service",
-        parents=[child_shared],
-        help="Alias: install --keyboard",
-    )
-    isvc.add_argument(
-        "--wait",
-        type=int,
-        default=12,
-        help="BT controller wait seconds",
-    )
-    sub.add_parser(
-        "uninstall-service",
-        parents=[child_shared],
-        help="Alias: uninstall --keyboard",
-    )
     sub.add_parser(
         "bootstrap-python",
         parents=[child_shared],
@@ -595,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
     ptr = sub.add_parser(
         "pointer",
         parents=[child_shared],
-        help="Pointer/mouse commands (same as python -m paperpointer)",
+        help="Pointer/mouse commands",
     )
     # Nested pointer uses root --password/--host; also allow after subcommand via shared
     shared = shared_flag_parser(for_subparser=True)
@@ -616,20 +600,6 @@ def main(argv=None) -> int:
         "status": cmd_status,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
-        "install-service": lambda a: cmd_install(
-            argparse.Namespace(
-                **{
-                    **vars(a),
-                    "keyboard": True,
-                    "pointer": False,
-                    "all": False,
-                    "no_bootstrap": True,
-                }
-            )
-        ),
-        "uninstall-service": lambda a: cmd_uninstall(
-            argparse.Namespace(**{**vars(a), "keyboard": True, "pointer": False, "all": False})
-        ),
         "bootstrap-python": cmd_bootstrap_python,
         "ssh": lambda a: kb.cmd_ssh(_kb_args_view(a)),
         "scan": lambda a: kb.cmd_scan(_kb_args_view(a)),

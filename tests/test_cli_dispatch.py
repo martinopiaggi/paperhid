@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import sys
 import unittest
@@ -17,23 +18,34 @@ from paperpointer.cli import (
 )
 
 
-# Legacy / diagnostic commands that must remain in the inventory
-REQUIRED_LEGACY = (
-    "enable-fb",
+def _parse_expect_exit(parser, argv):
+    """parse_args that must SystemExit; swallow argparse usage noise."""
+    with contextlib.redirect_stderr(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            parser.parse_args(argv)
+
+
+# Supported cursor/settings commands (QML path only; no abandoned FB tooling).
+REQUIRED_CURSOR_COMMANDS = (
     "disable-settings-ui",
     "settings-ui-check",
-    "fb-config",
     "enable-cursor",
     "enable-settings-ui",
     "stock-ui",
 )
+REMOVED_LEGACY_COMMANDS = ("enable-fb", "fb-config")
 
 
 class TestPointerInventory(unittest.TestCase):
-    def test_inventory_includes_legacy(self):
-        for name in REQUIRED_LEGACY:
+    def test_inventory_includes_supported_cursor(self):
+        for name in REQUIRED_CURSOR_COMMANDS:
             self.assertIn(name, POINTER_ALL_COMMANDS)
             self.assertIn(name, POINTER_SIMPLE_COMMANDS)
+
+    def test_inventory_excludes_abandoned_fb(self):
+        for name in REMOVED_LEGACY_COMMANDS:
+            self.assertNotIn(name, POINTER_ALL_COMMANDS)
+            self.assertNotIn(name, POINTER_SIMPLE_COMMANDS)
 
     def test_parser_registers_all_simple(self):
         p = build_pointer_parser()
@@ -47,9 +59,9 @@ class TestPointerInventory(unittest.TestCase):
     def test_cursor_rate_bounds(self):
         p = build_pointer_parser()
         with self.assertRaises(SystemExit):
-            p.parse_args(["cursor-rate", "0"])
+            _parse_expect_exit(p, ["cursor-rate", "0"])
         with self.assertRaises(SystemExit):
-            p.parse_args(["cursor-rate", "99"])
+            _parse_expect_exit(p, ["cursor-rate", "99"])
         args = p.parse_args(["cursor-rate", "30"])
         self.assertEqual(args.hz, 30)
 
@@ -58,7 +70,7 @@ class TestPointerInventory(unittest.TestCase):
         args = p.parse_args(["cursor-style", "win95"])
         self.assertEqual(args.style, "win95")
         with self.assertRaises(SystemExit):
-            p.parse_args(["cursor-style", "nope"])
+            _parse_expect_exit(p, ["cursor-style", "nope"])
 
     def test_flags_before_and_after_subcommand(self):
         p = build_pointer_parser()
@@ -109,6 +121,80 @@ class TestDispatchPointer(unittest.TestCase):
             dispatch_pointer(self._args("cursor-style", style="cross"), conn)
             m.assert_called_once_with(conn, "cross")
 
+    def test_cursor_style_uploads_daemon_and_ppd_package(self):
+        """Style redeploy stages then activates facade+ppd together."""
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(ppcli, "put_daemon_sources") as put_daemon:
+            with patch.object(ppcli, "activate_daemon_sources", return_value=0) as act:
+                with patch.object(ppcli, "put_file_atomic"):
+                    with patch.object(ppcli, "run", return_value=("", "", 0)):
+                        code = ppcli.cmd_cursor_style(conn, "cross")
+        self.assertEqual(code, 0)
+        put_daemon.assert_called_once_with(conn)
+        act.assert_called_once()
+        self.assertEqual(act.call_args.kwargs.get("restart"), False)
+
+    def test_cursor_rate_uploads_daemon_and_ppd_package(self):
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(ppcli, "put_daemon_sources") as put_daemon:
+            with patch.object(ppcli, "activate_daemon_sources", return_value=0) as act:
+                code = ppcli.cmd_cursor_rate(conn, 12)
+        self.assertEqual(code, 0)
+        put_daemon.assert_called_once_with(conn)
+        act.assert_called_once()
+        self.assertEqual(act.call_args.kwargs.get("cursor_hz"), 12)
+        self.assertEqual(act.call_args.kwargs.get("restart"), True)
+
+    def test_put_daemon_sources_stages_facade_and_ppd_next(self):
+        """Staging must not write live ppd/; activation swaps both."""
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(ppcli, "put_file_atomic") as put_file:
+            with patch.object(ppcli, "put_tree") as put_tree:
+                with patch.object(ppcli, "run", return_value=("", "", 0)) as run_mock:
+                    daemon, ppd = ppcli.put_daemon_sources(conn)
+        put_file.assert_called_once()
+        args, _ = put_file.call_args
+        self.assertEqual(args[1], ppcli.DEVICE_DIR / "paperpointerd.py")
+        self.assertEqual(args[2], ppcli.DAEMON_CANDIDATE)
+        self.assertEqual(daemon, ppcli.DAEMON_CANDIDATE)
+        put_tree.assert_called_once()
+        t_args, _ = put_tree.call_args
+        self.assertEqual(t_args[1], ppcli.PPD_DIR)
+        self.assertEqual(t_args[2], ppcli.PPD_NEXT)
+        self.assertEqual(ppd, ppcli.PPD_NEXT)
+        # Live tree is not the staging target.
+        self.assertNotEqual(t_args[2], ppcli.PPD_LIVE)
+        self.assertTrue(
+            any("rm -rf" in str(c) and "ppd.next" in str(c) for c in run_mock.call_args_list)
+            or run_mock.called
+        )
+
+    def test_activate_daemon_sources_script_swaps_both_paths(self):
+        """Remote script must validate staged pair and roll back facade + ppd."""
+        from paperpointer import cli as ppcli
+
+        conn = MagicMock()
+        with patch.object(ppcli, "run", return_value=("OK\n", "", 0)) as run_mock:
+            code = ppcli.activate_daemon_sources(conn, cursor_hz=12, restart=True)
+        self.assertEqual(code, 0)
+        script = run_mock.call_args[0][1]
+        self.assertIn("ppd.next", script)
+        self.assertIn("paperpointerd.py.candidate", script)
+        self.assertIn("HAD_PPD", script)
+        self.assertIn("OLD_PPD", script)
+        self.assertIn("ARMED=1", script)
+        self.assertIn("mv -f \"$PPD_NEXT\" \"$PPD\"", script)
+        self.assertIn("mv -f \"$CANDIDATE\" \"$DAEMON\"", script)
+        # Joint rollback restores ppd, not only facade+conf.
+        self.assertIn('mv -f "$OLD_PPD" "$PPD"', script)
+        self.assertIn("cursor_hz=12", script)
+
     def test_test_tap_dispatch(self):
         conn = MagicMock()
         with patch("paperpointer.cli.cmd_test_tap", return_value=0) as m:
@@ -128,68 +214,103 @@ class TestDispatchPointer(unittest.TestCase):
         self.assertEqual(dispatch_pointer(self._args("nope"), MagicMock()), 1)
 
 
-class TestPointerMainCleanup(unittest.TestCase):
-    def test_main_closes_connection_and_propagates(self):
-        from paperpointer import cli as ppcli
+class TestRootPointerDispatchCleanup(unittest.TestCase):
+    """Root ``cli.py pointer`` owns connect/close; library dispatch stays pure."""
+
+    def test_root_cmd_pointer_closes_connection_and_propagates(self):
+        import cli as root_cli
 
         fake = MagicMock()
-        with patch.object(ppcli, "password_from_env", return_value="pw"):
-            with patch.object(ppcli, "connect", return_value=fake) as conn:
-                with patch.object(ppcli, "dispatch_pointer", return_value=42) as disp:
-                    code = ppcli.main(["status", "--password", "pw"])
+        args = argparse.Namespace(
+            host="10.11.99.1",
+            ip=None,
+            password="pw",
+            save_password=False,
+            timeout=15,
+            pointer_cmd="status",
+            cmd=None,
+        )
+        with patch.object(root_cli, "_password_from_args", return_value="pw"):
+            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
+                with patch.object(
+                    root_cli, "open_pointer_paramiko", return_value=(fake, "h", "p")
+                ) as conn:
+                    with patch(
+                        "paperpointer.cli.dispatch_pointer", return_value=42
+                    ) as disp:
+                        code = root_cli.cmd_pointer(args)
         self.assertEqual(code, 42)
         conn.assert_called_once()
         disp.assert_called_once()
         fake.close.assert_called_once()
 
-    def test_main_closes_on_dispatch_error(self):
-        from paperpointer import cli as ppcli
+    def test_root_cmd_pointer_closes_on_dispatch_error(self):
+        import cli as root_cli
 
         fake = MagicMock()
-        with patch.object(ppcli, "password_from_env", return_value="pw"):
-            with patch.object(ppcli, "connect", return_value=fake):
+        args = argparse.Namespace(
+            host="10.11.99.1",
+            ip=None,
+            password="pw",
+            save_password=False,
+            timeout=15,
+            pointer_cmd="status",
+            cmd=None,
+        )
+        with patch.object(root_cli, "_password_from_args", return_value="pw"):
+            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
                 with patch.object(
-                    ppcli, "dispatch_pointer", side_effect=RuntimeError("boom")
+                    root_cli, "open_pointer_paramiko", return_value=(fake, "h", "p")
                 ):
-                    with self.assertRaises(RuntimeError):
-                        ppcli.main(["status"])
+                    with patch(
+                        "paperpointer.cli.dispatch_pointer",
+                        side_effect=RuntimeError("boom"),
+                    ):
+                        with self.assertRaises(RuntimeError):
+                            root_cli.cmd_pointer(args)
         fake.close.assert_called_once()
 
 
-class TestBothModuleEntryPoints(unittest.TestCase):
-    def test_paperpointer_main_module(self):
-        import importlib.util
+class TestUnifiedCliEntry(unittest.TestCase):
+    def test_paperpointer_module_is_not_public_cli(self):
+        import subprocess
         from pathlib import Path
 
-        main_path = Path(__file__).resolve().parents[1] / "paperpointer" / "__main__.py"
-        text = main_path.read_text(encoding="utf-8")
-        self.assertIn("if __name__", text)
-        self.assertIn("main()", text)
-        from paperpointer.cli import main as cli_main
+        root = Path(__file__).resolve().parents[1]
+        r = subprocess.run(
+            [sys.executable, "-m", "paperpointer"],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cli.py pointer", r.stderr)
 
-        self.assertTrue(callable(cli_main))
-
-    def test_help_lists_legacy_via_both_paths(self):
+    def test_unified_help_lists_supported_pointer_commands(self):
         import subprocess
+        from pathlib import Path
 
-        for mod in ("paperpointer", "paperpointer.cli"):
-            r = subprocess.run(
-                [sys.executable, "-m", mod, "--help"],
-                capture_output=True,
-                text=True,
-                cwd=str(__import__("pathlib").Path(__file__).resolve().parents[1]),
-            )
-            # --help exits 0
-            self.assertEqual(r.returncode, 0, r.stderr)
-            # subcommands only show on subcommand help sometimes; parse -h of root
-            # lists usage; run status -h isn't needed — check parser choices instead
+        root = Path(__file__).resolve().parents[1]
+        r = subprocess.run(
+            [sys.executable, "cli.py", "pointer", "--help"],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        help_text = r.stdout + r.stderr
+        for name in REQUIRED_CURSOR_COMMANDS:
+            self.assertIn(name, help_text)
+        for name in REMOVED_LEGACY_COMMANDS:
+            self.assertNotIn(name, help_text)
+
         p = build_pointer_parser()
-        help_text = p.format_help()
-        # Root help may not list all; check choices
         actions = [a for a in p._subparsers._group_actions if a.dest == "cmd"]
         choices = actions[0].choices
-        for name in REQUIRED_LEGACY:
+        for name in REQUIRED_CURSOR_COMMANDS:
             self.assertIn(name, choices)
+        for name in REMOVED_LEGACY_COMMANDS:
+            self.assertNotIn(name, choices)
 
 
 class TestPointerProbeParse(unittest.TestCase):
@@ -421,7 +542,7 @@ class TestRootCliInstallModes(unittest.TestCase):
 
         p = root_cli.build_parser()
         with self.assertRaises(SystemExit):
-            p.parse_args(["install"])
+            _parse_expect_exit(p, ["install"])
 
     def test_install_modes_mutex(self):
         import cli as root_cli
@@ -434,7 +555,7 @@ class TestRootCliInstallModes(unittest.TestCase):
         c = p.parse_args(["install", "--all"])
         self.assertTrue(c.all)
         with self.assertRaises(SystemExit):
-            p.parse_args(["install", "--keyboard", "--pointer"])
+            _parse_expect_exit(p, ["install", "--keyboard", "--pointer"])
 
     def test_global_flags_before_and_after_subcommand(self):
         """README form: install --all --save-password (flag after subcommand)."""
@@ -461,14 +582,15 @@ class TestRootCliInstallModes(unittest.TestCase):
         self.assertEqual(det.timeout, 9)
         self.assertFalse(det.save_password)
 
-    def test_install_service_alias_accepts_wait(self):
-        """Compat: python cli.py install-service --wait N (PaperWriter CLI)."""
+    def test_install_service_alias_removed(self):
+        """Never-released PaperWriter-style aliases are not public."""
         import cli as root_cli
 
         p = root_cli.build_parser()
-        args = p.parse_args(["install-service", "--wait", "30"])
-        self.assertEqual(args.command, "install-service")
-        self.assertEqual(args.wait, 30)
+        with self.assertRaises(SystemExit):
+            _parse_expect_exit(p, ["install-service", "--wait", "30"])
+        with self.assertRaises(SystemExit):
+            _parse_expect_exit(p, ["uninstall-service"])
 
     def test_failed_auth_never_saves_password(self):
         """--save-password must not write config when connect fails."""

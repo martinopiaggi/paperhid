@@ -28,24 +28,24 @@ class TestUiActionsShipped(unittest.TestCase):
             self.assertIn("set -eu", text)
 
     def test_hide_ms_allowlist(self):
-        text = (UI / "set-hide-ms.sh").read_text(encoding="utf-8")
-        for val in ("0", "3000", "10000", "60000"):
-            self.assertIn(val, text)
+        # Wrappers delegate; allow-list lives in paperhid-ui.
+        wrap = (UI / "set-hide-ms.sh").read_text(encoding="utf-8")
+        self.assertIn("paperhid-ui set-hide-ms", wrap)
+        text = (ROOT / "device" / "paperhid-ui").read_text(encoding="utf-8")
+        self.assertIn("0|3000|10000|60000", text)
         self.assertIn("cursor_hide_ms", text)
-        self.assertIn("restart_daemon", text)
 
     def test_accel_allowlist(self):
-        text = (UI / "set-accel.sh").read_text(encoding="utf-8")
-        for val in ("1.0", "2.0", "3.0", "4.0"):
-            self.assertIn(val, text)
-        self.assertIn("accel", text)
+        wrap = (UI / "set-accel.sh").read_text(encoding="utf-8")
+        self.assertIn("paperhid-ui set-accel", wrap)
+        text = (ROOT / "device" / "paperhid-ui").read_text(encoding="utf-8")
+        self.assertIn("1.0|2.0|3.0|4.0", text)
 
     def test_cursor_style_allowlist(self):
-        text = (UI / "set-cursor-style.sh").read_text(encoding="utf-8")
+        wrap = (UI / "set-cursor-style.sh").read_text(encoding="utf-8")
+        self.assertIn("paperhid-ui set-cursor-style", wrap)
+        text = (ROOT / "device" / "paperhid-ui").read_text(encoding="utf-8")
         self.assertIn("cross|win95", text)
-        self.assertIn("cursor_style", text)
-        self.assertIn("cursor_style", text)
-        self.assertIn("restart_daemon", text)
         self.assertIn("win95.png", text)
 
     def test_cursor_qmd_has_no_experimental_settings_panel(self):
@@ -71,19 +71,19 @@ class TestUiActionsShipped(unittest.TestCase):
         self.assertIn("Layout.fillWidth: true", text)
         self.assertNotIn("y: column.y + supportText.y", text)
         self.assertIn('listeningFor: ["paperpointer.settings.ping"]', text)
-        self.assertNotIn("onFinished", text)
 
     def test_settings_commands_are_fixed_and_allow_listed(self):
         text = SETTINGS_QMD.read_text(encoding="utf-8")
-        hide = "/home/root/.paperpointer/ui-actions/set-hide-ms.sh"
-        style = "/home/root/.paperpointer/ui-actions/set-cursor-style.sh"
-        self.assertEqual(text.count(f'command: "{hide}"'), 2)
-        self.assertEqual(text.count(f'command: "{style}"'), 2)
-        self.assertIn('arguments: ["0"]', text)
-        self.assertIn('arguments: ["3000"]', text)
-        self.assertIn('arguments: ["cross"]', text)
-        self.assertIn('arguments: ["win95"]', text)
+        ui = "/home/root/.paperhid/paperhid-ui"
+        self.assertIn(f'command: "{ui}"', text)
+        self.assertGreaterEqual(text.count(f'command: "{ui}"'), 5)
+        self.assertIn('arguments: ["status"]', text)
+        self.assertIn('arguments: ["set-hide-ms", "0"]', text)
+        self.assertIn('arguments: ["set-hide-ms", "3000"]', text)
+        self.assertIn('arguments: ["set-cursor-style", "cross"]', text)
+        self.assertIn('arguments: ["set-cursor-style", "win95"]', text)
         self.assertNotIn('command: "/bin/sh"', text)
+        self.assertNotIn("/home/root/.paperpointer/ui-actions/", text)
 
     def test_shipped_win95_skin_exists(self):
         cursors = ROOT / "device" / "cursors"
@@ -99,6 +99,11 @@ class TestUiActionsShipped(unittest.TestCase):
         self.assertIn("wait_for_stable_xochitl", text)
         self.assertIn("systemctl reset-failed xochitl.service", text)
         self.assertNotIn('"$XO" = "$XO_CHECK"', text)
+        # Keyboard-only: must not require the pointer daemon.
+        self.assertNotIn(
+            "systemctl is-active --quiet paperpointer.service",
+            text,
+        )
 
     def test_settings_disable_uses_the_same_stable_xochitl_check(self):
         text = CLI.read_text(encoding="utf-8")
@@ -108,6 +113,39 @@ class TestUiActionsShipped(unittest.TestCase):
         self.assertIn("wait_for_stable_xochitl", command)
         self.assertIn("systemctl reset-failed xochitl.service", command)
         self.assertNotIn('"$XO" = "$(pidof xochitl', command)
+        self.assertNotIn("systemctl is-active --quiet", command)
+
+    def test_enable_cursor_never_deletes_settings_qmd(self):
+        cursor = (ROOT / "device" / "enable_cursor.sh").read_text(encoding="utf-8")
+        self.assertNotIn("rm -f \"$LEGACY_SETTINGS_QMD\"", cursor)
+        self.assertNotIn('rm -f "$QMD_TARGET" "$LEGACY_SETTINGS_QMD"', cursor)
+        # Must not remove the live settings panel by name on the success path.
+        self.assertNotIn(
+            'rm -f "$QMD_TARGET" "$LEGACY_SETTINGS_QMD" "$PING_LOG"',
+            cursor,
+        )
+        # Success path must not delete paperpointer-settings.qmd at all.
+        for line in cursor.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "paperpointer-settings.qmd" in stripped and "rm " in stripped:
+                self.fail(f"enable_cursor must not rm settings QMD: {stripped}")
+
+    def test_stock_ui_preserves_settings_qmd(self):
+        text = CLI.read_text(encoding="utf-8")
+        start = text.index("def cmd_stock_ui")
+        rest = text[start + 1 :]
+        cut = len(rest)
+        for marker in ("\ndef cmd_", "\ndef build_", "\ndef dispatch_", "\nPOINTER_"):
+            if marker in rest:
+                cut = min(cut, rest.index(marker))
+        body = text[start : start + 1 + cut]
+        self.assertIn("Settings UI preserved", body)
+        self.assertIn("never delete the Settings panel QMD", body)
+        # Must not rm both cursor and settings in one command.
+        self.assertNotIn('rm -f "$QMD" "$SETTINGS_QMD" "$FIFO"', body)
+        self.assertIn('rm -f "$QMD" "$FIFO"', body)
 
 
 if __name__ == "__main__":
