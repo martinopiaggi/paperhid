@@ -77,6 +77,7 @@ def load_conf(path: str | None = None) -> dict:
                     "scroll_as_swipe",
                     "finger_drag",
                     "cursor",
+                    "osk_suppress",
                 ):
                     valid = parsed in (0, 1)
                 elif k == "source":

@@ -82,6 +82,7 @@ If Help looks empty after a freeze or reboot, XOVI may not be tethered — recov
 | Mouse not moving | `python cli.py status`; re-pair; wake HID after sleep |
 | Keyboard dead after sleep | Press a key; `status`; re-run `install --keyboard` if the unit is gone |
 | Settings → Help has no PaperHid block | Power-cycle if frozen; USB; `python cli.py pointer enable-settings-ui`; open Help again — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
+| BT keyboard forces landscape | Default off. If you enabled `osk_suppress=1` in `~/.paperpointer/pointer.conf`, set it back to `0` and restart the pointer service |
 
 ## Tests
 

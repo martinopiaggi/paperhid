@@ -43,8 +43,14 @@ from .touch import (
 def run_loop(cfg: dict) -> None:
     touch = TouchClick(int(cfg["touch_x_max"]), int(cfg["touch_y_max"]))
     kb_presence = KeyboardPresence()
-    # Suppress virtual keyboard while a BT keyboard is connected (mouse/touch focus).
-    kb_presence.sync()
+    # Optional: spoof Type Folio (rM_Keyboard) to hide OSK — also forces landscape.
+    osk_suppress = bool(int(cfg.get("osk_suppress", 0)))
+    if osk_suppress:
+        log("osk_suppress=1 (rM_Keyboard spoof; UI may force landscape)")
+        kb_presence.sync()
+    else:
+        kb_presence.close()
+        log("osk_suppress=0 (no Type Folio spoof; no forced landscape)")
     last_kb_presence_check = time.monotonic()
     cur = None
     if cfg.get("cursor"):
@@ -297,11 +303,17 @@ def run_loop(cfg: dict) -> None:
                 if cur:
                     pub(visible=False)
                 # Still track BT keyboard while waiting for a pointer node.
-                kb_presence.sync()
+                if osk_suppress:
+                    kb_presence.sync()
+                else:
+                    kb_presence.close()
                 time.sleep(1.0)
                 continue
             # Re-evaluate on every (re)open of pointer sources (connect/wake).
-            kb_presence.sync()
+            if osk_suppress:
+                kb_presence.sync()
+            else:
+                kb_presence.close()
             # Show on connect. With cursor_hide_ms=0 the crosshair stays for the
             # whole time a pointer node is open, including idle; a positive value
             # auto-hides after that many idle milliseconds.
@@ -336,7 +348,10 @@ def run_loop(cfg: dict) -> None:
                         now = time.monotonic()
                         if now - last_kb_presence_check >= 0.5:
                             last_kb_presence_check = now
-                            kb_presence.sync()
+                            if osk_suppress:
+                                kb_presence.sync()
+                            else:
+                                kb_presence.close()
                         if (
                             hide_ms > 0
                             and cursor_visible

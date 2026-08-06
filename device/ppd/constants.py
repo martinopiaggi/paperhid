@@ -98,10 +98,8 @@ IGNORE_NAME_SUBSTR = (
     "paperpointer",
 )
 
-# xochitl KeyboardInfo looks for Type Folio-style keyboards (name rM_Keyboard
-# and/or ID_INPUT_KEYBOARD). Bluetooth HID keyboards type fine via
-# EpaperEvdevKeyboard but do not always set keyboardConnected, so a touch
-# or synthetic mouse click still pops the on-screen virtual keyboard.
+# Optional OSK suppress: spoof Type Folio name so xochitl sets keyboardConnected.
+# Side effect: Paper Pro treats Type Folio as landscape — default off.
 RM_KEYBOARD_NAME = b"rM_Keyboard"
 # Keys that make udev classify the node as ID_INPUT_KEYBOARD (A-Z + Enter).
 _PRESENCE_KEY_CODES = tuple(range(1, 58))  # ESC..KEY_SPACE range on Linux
@@ -127,5 +125,8 @@ DEFAULT_CONF: dict = {
     # mapped to the Elan panel's fixed portrait axes via this setting:
     # 0/90/180/270 force a fixed UI rotation; "auto" reads ui_orientation.
     "orientation": ORIENTATION_AUTO,
+    # 0 = do not spoof Type Folio (no forced landscape). 1 = hide OSK on click
+    # by creating rM_Keyboard while a BT keyboard is present (landscape side effect).
+    "osk_suppress": 0,
     "source": "",
 }

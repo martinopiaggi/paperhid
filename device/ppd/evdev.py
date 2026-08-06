@@ -286,14 +286,14 @@ def external_keyboard_present(devices_blob: str | None = None) -> bool:
 
 
 class KeyboardPresence:
-    """Hold a Type-Folio-named uinput keyboard while a BT keyboard is present.
+    """Optional Type-Folio-named uinput keyboard while a BT keyboard is present.
 
-    xochitl's ``KeyboardInfo`` / virtual-keyboard module suppresses the
-    on-screen keyboard when it believes a hardware keyboard is connected
-    (Type Folio appears as ``rM_Keyboard``). Bluetooth keyboards often type
-    correctly without flipping that flag, so mouse-click focus still opens
-    the OSK. While any external keyboard HID is present, we expose a silent
-    ``rM_Keyboard`` uinput node so the OSK stays down.
+    xochitl suppresses the on-screen keyboard when it believes a Type Folio is
+    connected (device name ``rM_Keyboard``). Spoofing that node also makes
+    Paper Pro **force landscape**, same as a real Folio.
+
+    Only create the node when the caller opts in (``osk_suppress=1``). Default
+    is off so BT keyboards do not rotate the UI.
     """
 
     def __init__(self) -> None:

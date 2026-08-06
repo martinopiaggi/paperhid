@@ -42,6 +42,7 @@ class TestDefaultConf(unittest.TestCase):
         self.assertEqual(cfg["cursor_style"], pp.CURSOR_STYLE_DEFAULT)
         self.assertEqual(cfg["finger_drag"], 0)
         self.assertEqual(cfg["orientation"], pp.ORIENTATION_AUTO)
+        self.assertEqual(cfg["osk_suppress"], 0)
 
     def test_load_conf_from_fixture(self):
         with tempfile.NamedTemporaryFile(
@@ -224,7 +225,7 @@ class TestDefaultConf(unittest.TestCase):
 
 
 class TestKeyboardPresenceDetection(unittest.TestCase):
-    """BT keyboard should suppress OSK via rM_Keyboard presence logic."""
+    """External keyboard detection (rM_Keyboard spoof is optional / off by default)."""
 
     SAMPLE = """
 I: Bus=0019 Vendor=0000 Product=0000 Version=0000
