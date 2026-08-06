@@ -264,6 +264,60 @@ class TestLayoutGate(unittest.TestCase):
         self.assertEqual(apostrophe[0][2], Key_Dead_Acute)
 
 
+class TestRestartDisplayPrefersXovi(unittest.TestCase):
+    """Layout must not plain-start xochitl when XOVI is installed (Settings)."""
+
+    def test_restart_display_uses_xovi_start(self):
+        from shared import layout_patcher as shared_lp
+        from shared.transport import Transport
+
+        calls = []
+
+        class T(Transport):
+            def run(self, cmd, timeout=30):
+                calls.append(cmd)
+                if "test -x /home/root/xovi/start" in cmd:
+                    return "", "", 0
+                return "", "", 0
+
+            def read_bytes(self, path):
+                raise NotImplementedError
+
+            def write_bytes(self, path, data):
+                raise NotImplementedError
+
+        shared_lp.restart_display(T())
+        joined = "\n".join(calls)
+        self.assertIn("/home/root/xovi/start", joined)
+        # Must not only bare-start without attempting XOVI first.
+        xovi_i = next(i for i, c in enumerate(calls) if "/home/root/xovi/start" in c)
+        bare = [i for i, c in enumerate(calls) if c.strip() == "systemctl start xochitl"]
+        self.assertTrue(not bare or bare[0] > xovi_i)
+
+    def test_restart_display_falls_back_without_xovi(self):
+        from shared import layout_patcher as shared_lp
+        from shared.transport import Transport
+
+        calls = []
+
+        class T(Transport):
+            def run(self, cmd, timeout=30):
+                calls.append(cmd)
+                if "test -x /home/root/xovi/start" in cmd:
+                    return "", "", 1
+                return "", "", 0
+
+            def read_bytes(self, path):
+                raise NotImplementedError
+
+            def write_bytes(self, path, data):
+                raise NotImplementedError
+
+        shared_lp.restart_display(T())
+        self.assertTrue(any("systemctl start xochitl" in c for c in calls))
+        self.assertFalse(any(c.strip() == "/home/root/xovi/start" for c in calls))
+
+
 class TestServiceResourcesPresent(unittest.TestCase):
     def test_bt_script_and_unit_exist(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

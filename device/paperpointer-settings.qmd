@@ -264,7 +264,7 @@ AFFECT /qml/device/view/settings/Help.qml
                 ArkControls.Body {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("US Intl: dead keys (e.g. ' then e → é). Restarts xochitl. More keys: set-layout --layout <key>.")
+                    text: qsTr("US Intl: dead keys (e.g. ' then e → é). Restarts the display (XOVI kept). Keyboard need not be connected. More keys: set-layout --layout <key>.")
                 }
 
                 RowLayout {

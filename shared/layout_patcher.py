@@ -292,9 +292,52 @@ def _recover(t: Transport, soft: bool = False) -> None:
         log.warning("transport recover: %s", e)
 
 
+def _xovi_available(t: Transport) -> bool:
+    """True when XOVI can re-tether xochitl (keeps Settings/cursor QMD patches)."""
+    try:
+        _, _, code = t.run(
+            "test -x /home/root/xovi/start && test -f /home/root/xovi/xovi.so",
+            timeout=5,
+        )
+        return code == 0
+    except Exception:
+        return False
+
+
+def restart_display(t: Transport, status=None) -> None:
+    """Start xochitl, preferring XOVI so Help/cursor QMD patches stay active.
+
+    Plain ``systemctl start xochitl`` drops XOVI and makes Settings → Help look
+    empty even though paperpointer-settings.qmd is still on disk.
+    """
+    def _status(msg: str) -> None:
+        if status:
+            status(msg)
+        log.info("%s", msg)
+
+    _status("Starting display app...")
+    try:
+        t.run("systemctl reset-failed xochitl.service 2>/dev/null || true", timeout=10)
+    except Exception:
+        pass
+    if _xovi_available(t):
+        out, err, code = t.run("/home/root/xovi/start", timeout=90)
+        if code != 0:
+            log.warning("xovi start failed (%s): %s", code, (err or out)[:300])
+            # Fall back to stock so the tablet is never left without UI.
+            t.run("systemctl start xochitl", timeout=30)
+    else:
+        t.run("systemctl start xochitl", timeout=30)
+    # Brief settle so callers can re-check stability.
+    try:
+        t.run("sleep 2", timeout=5)
+    except Exception:
+        pass
+
+
 def _deploy_binary(t: Transport, binary_data: bytes, status, restart_ui: bool) -> None:
     if restart_ui:
-        status("Restarting display app...")
+        status("Stopping display app for library update...")
         try:
             t.run("systemctl stop xochitl", timeout=15)
         except Exception as e:
@@ -322,14 +365,14 @@ def _deploy_binary(t: Transport, binary_data: bytes, status, restart_ui: bool) -
     finally:
         if restart_ui:
             try:
-                t.run("systemctl start xochitl", timeout=30)
+                restart_display(t, status=status)
             except Exception as e:
-                log.warning("start xochitl: %s", e)
+                log.warning("restart display: %s", e)
                 _recover(t)
                 try:
-                    t.run("systemctl start xochitl", timeout=30)
+                    restart_display(t, status=status)
                 except Exception as e2:
-                    log.warning("start xochitl retry: %s", e2)
+                    log.warning("restart display retry: %s", e2)
             _recover(t, soft=True)
 
 

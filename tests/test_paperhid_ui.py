@@ -117,6 +117,15 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn("set-layout", text)
         self.assertIn("cmd_set_layout", text)
         self.assertIn("set_layout.py", text)
+        # Recover UI if helper fails (must not leave dead xochitl).
+        self.assertIn("xovi/start", text)
+
+    def test_set_layout_helper_prefers_xovi_and_recovers(self):
+        helper = (ROOT / "device" / "set_layout.py").read_text(encoding="utf-8")
+        self.assertIn("restart_display", helper)
+        self.assertIn("_ensure_settings_qmd_present", helper)
+        self.assertIn("restore_original", helper)
+        self.assertIn("Never depends on a connected Bluetooth keyboard", helper)
 
     def test_settings_installer_requires_paperhid_ui_not_pointer_service(self):
         text = SETTINGS_INSTALLER.read_text(encoding="utf-8")

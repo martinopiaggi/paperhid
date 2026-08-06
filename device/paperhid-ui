@@ -425,6 +425,8 @@ cmd_set_hide_ms() {
 }
 
 cmd_set_layout() {
+    # Keyboard need not be connected — layout patches libepaper for when it is.
+    # Always restart via XOVI (set_layout.py) so Settings → Help does not vanish.
     val="${1:-}"
     case "$val" in
         us|us_intl|uk|de|fr|fr_ca|es|it|pt|br|nl|sv|no|dk|fi|is|de_ch|fr_ch|be|ru|ua|cz|hu|tr|gr|he) ;;
@@ -445,10 +447,18 @@ cmd_set_layout() {
         printf '%s\n' '{"ok":false,"error":"set_layout.py missing"}'
         return 16
     fi
-    # Layout patch restarts xochitl; capture JSON from the helper.
+    # Layout stops xochitl (UI dies mid-command); helper must restore XOVI.
     out=$(/opt/bin/python3 "$HOME_PH/set_layout.py" "$val" 2>"$HOME_PH/set-layout.err") || {
         err=$(sed -n '1p' "$HOME_PH/set-layout.err" 2>/dev/null || true)
         set_error "layout failed: ${err:-unknown}"
+        # Last-ditch: bring UI back even if helper crashed hard.
+        if [ -x /home/root/xovi/start ]; then
+            systemctl reset-failed xochitl.service 2>/dev/null || true
+            /home/root/xovi/start >/tmp/paperhid-layout-recover.log 2>&1 || \
+                systemctl start xochitl 2>/dev/null || true
+        else
+            systemctl start xochitl 2>/dev/null || true
+        fi
         if [ -n "$out" ]; then
             printf '%s\n' "$out"
         else
