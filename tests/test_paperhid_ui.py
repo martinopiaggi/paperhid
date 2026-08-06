@@ -108,7 +108,8 @@ class TestPaperhidUiShipped(unittest.TestCase):
         self.assertIn('arguments: ["set-layout", "us"]', text)
         self.assertIn('arguments: ["set-layout", "us_intl"]', text)
         self.assertIn("US Intl", text)
-        self.assertIn("preferredHeight: 48", text)
+        self.assertIn("preferredWidth: 120", text)
+        self.assertNotIn("preferredHeight: 48", text)
         self.assertIn("dead keys", text)
 
     def test_set_layout_command_allowlist(self):

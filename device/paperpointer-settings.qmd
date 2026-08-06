@@ -248,7 +248,7 @@ AFFECT /qml/device/view/settings/Help.qml
                 }
 
                 // --- Language layout (libepaper; restarts xochitl) ---
-                // Compact secondary buttons: 4 per row, preferred height ~48.
+                // Stock button height; narrower fixed width (not row-stretch).
                 ArkControls.Body {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
@@ -272,9 +272,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     spacing: ArkControls.Values.spacing.small
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("US")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -287,9 +287,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 140
+                        Layout.maximumWidth: 160
                         type: ArkTokens.Button.secondary
                         text: qsTr("US Intl")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -302,9 +302,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("UK")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -317,9 +317,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("DE")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -330,6 +330,8 @@ AFFECT /qml/device/view/settings/Help.qml
                             paperHidLayoutDe.startCommand(100);
                         }
                     }
+
+                    Item { Layout.fillWidth: true }
                 }
 
                 RowLayout {
@@ -337,9 +339,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     spacing: ArkControls.Values.spacing.small
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("FR")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -352,9 +354,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("IT")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -367,9 +369,9 @@ AFFECT /qml/device/view/settings/Help.qml
                     }
 
                     ArkControls.Button {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 48
-                        Layout.maximumHeight: 52
+                        Layout.fillWidth: false
+                        Layout.preferredWidth: 120
+                        Layout.maximumWidth: 140
                         type: ArkTokens.Button.secondary
                         text: qsTr("ES")
                         enabled: !paperPointerSettingsRoot.mutationBusy
@@ -380,6 +382,8 @@ AFFECT /qml/device/view/settings/Help.qml
                             paperHidLayoutEs.startCommand(100);
                         }
                     }
+
+                    Item { Layout.fillWidth: true }
                 }
 
                 // --- Pointer and cursor ---
