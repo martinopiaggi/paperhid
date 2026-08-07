@@ -899,6 +899,37 @@ class TestPointerSshRunTimeout(unittest.TestCase):
             "detect must bound bluetoothctl with a short timeout",
         )
 
+    def test_cmd_detect_prints_short_summary(self):
+        from paperpointer import cli as ppcli
+
+        remote = (
+            "INPUTS=Elan marker input,Elan touch input\n"
+            "UINPUT=yes\n"
+            "TS_NODE=/dev/input/event3\n"
+            "BT_MODULES=bluetooth,rfkill\n"
+            "KB_SERVICE=activating\n"
+            "BT_SERVICE=inactive\n"
+            "KB_MAC=\n"
+            "PAIRED=\n"
+            "PYTHON=no\n"
+            "PYTHON_VER=\n"
+            "POINTER_HOME=no\n"
+            "POINTER_SERVICE=inactive\n"
+        )
+        conn = MagicMock()
+        buf = io.StringIO()
+        with patch.object(ppcli, "run", return_value=(remote, "", 0)):
+            with contextlib.redirect_stdout(buf):
+                code = ppcli.cmd_detect(conn)
+        self.assertEqual(code, 0)
+        text = buf.getvalue()
+        self.assertIn("touch: Elan touch input", text)
+        self.assertIn("pen: Elan marker input", text)
+        self.assertIn("python3: missing", text)
+        self.assertNotIn("Codex Linux", text)
+        self.assertNotIn("Handlers=", text)
+        self.assertLess(len(text.splitlines()), 20)
+
 
 class TestEntwareBootstrapUsability(unittest.TestCase):
     """Partial Entware must not be mistaken for a usable install."""

@@ -218,25 +218,13 @@ echo "OK: daemon + ppd activated"
 
 
 def cmd_detect(c) -> int:
-    """Fast tablet probe for first-run ``python cli.py detect``.
+    """Short first-run pointer probe (key: value lines, not a sysdump).
 
-    Avoid bare ``bluetoothctl``: on Paper Pro it can hang forever when the NXP
-    controller is wedged. Bound every interactive/BT call and keep the overall
-    remote script under a short host-side deadline.
+    Verbose dumps live under ``pointer probe`` / ``pointer bt-status``.
+    ``bluetoothctl`` is always time-bounded (can hang on wedged NXP BT).
     """
-    # shell timeout helper: prefer coreutils/busybox timeout, else background+kill
     script = r"""
 set +e
-uname -a
-echo ---
-cat /etc/os-release 2>/dev/null | sed -n '1,8p'
-echo ---
-lsmod | grep -E 'btnxp|uhid|uinput|bluetooth' || true
-echo ---
-cat /proc/bus/input/devices 2>/dev/null
-echo ---
-ls -la /dev/uinput /dev/input/ 2>&1
-echo ---
 _bt() {
   if command -v timeout >/dev/null 2>&1; then
     timeout 4 bluetoothctl "$@" 2>/dev/null
@@ -249,20 +237,37 @@ _bt() {
   wait "$_bp" 2>/dev/null
   return 0
 }
-_bt devices Paired || echo '(bluetoothctl timed out or unavailable)'
-echo ---
-cat /home/root/.paperwriter-keyboard 2>/dev/null
-systemctl is-active remarkable-bt-keyboard bluetooth 2>&1
-echo ---
-if [ -x /opt/bin/python3 ]; then
-  command -v /opt/bin/python3
-  /opt/bin/python3 -V 2>&1
+
+# All input device names, comma-separated (host picks touch/pen labels).
+inputs=$(grep '^N: Name=' /proc/bus/input/devices 2>/dev/null | sed 's/^N: Name="//;s/"$//' | tr '\n' ',' | sed 's/,$//')
+echo "INPUTS=${inputs:-none}"
+echo "UINPUT=$([ -e /dev/uinput ] && echo yes || echo no)"
+if [ -e /dev/input/touchscreen0 ]; then
+  echo "TS_NODE=$(readlink -f /dev/input/touchscreen0 2>/dev/null || echo /dev/input/touchscreen0)"
 else
-  echo 'python3: missing (/opt/bin/python3)'
+  echo "TS_NODE=none"
 fi
+
+mods=$(lsmod 2>/dev/null | awk 'NR>1 && $1 ~ /btnxp|uhid|uinput|bluetooth/ {printf "%s%s", (n++?",":""), $1}')
+echo "BT_MODULES=${mods:-none}"
+
+echo "KB_SERVICE=$(systemctl is-active remarkable-bt-keyboard 2>/dev/null || echo unknown)"
+echo "BT_SERVICE=$(systemctl is-active bluetooth 2>/dev/null || echo unknown)"
+echo "KB_MAC=$(tr -d '\r\n' < /home/root/.paperwriter-keyboard 2>/dev/null || true)"
+echo "PAIRED=$(_bt devices Paired 2>/dev/null | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')"
+
+if [ -x /opt/bin/python3 ]; then
+  echo "PYTHON=yes"
+  echo "PYTHON_VER=$(/opt/bin/python3 -V 2>&1)"
+else
+  echo "PYTHON=no"
+  echo "PYTHON_VER="
+fi
+echo "POINTER_HOME=$([ -d /home/root/.paperpointer ] && echo yes || echo no)"
+echo "POINTER_SERVICE=$(systemctl is-active paperpointer.service 2>/dev/null || echo unknown)"
 """
     try:
-        out, err, _ = run(c, script, timeout=20)
+        out, _, _ = run(c, script, timeout=20)
     except TimeoutError as exc:
         print(f"pointer detect timed out: {exc}", file=sys.stderr)
         print(
@@ -271,9 +276,48 @@ fi
             file=sys.stderr,
         )
         return 1
-    _out(out)
-    if err.strip():
-        sys.stderr.write(err[:2000])
+
+    facts: dict[str, str] = {}
+    for line in (out or "").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            facts[k.strip()] = v.strip()
+
+    inputs = [n for n in (facts.get("INPUTS") or "").split(",") if n and n != "none"]
+    touch = next((n for n in inputs if "touch" in n.lower()), "none")
+    pen = next(
+        (n for n in inputs if any(t in n.lower() for t in ("marker", "pen", "stylus"))),
+        "none",
+    )
+
+    py = facts.get("PYTHON", "?")
+    py_ver = facts.get("PYTHON_VER", "")
+    if py == "yes" and py_ver:
+        py_line = py_ver
+    elif py == "no":
+        py_line = "missing (install --pointer bootstraps)"
+    else:
+        py_line = py
+
+    kb_mac = facts.get("KB_MAC") or "none"
+    paired = facts.get("PAIRED") or "none"
+
+    rows = (
+        ("touch", touch),
+        ("pen", pen),
+        ("uinput", facts.get("UINPUT", "?")),
+        ("touchscreen", facts.get("TS_NODE", "?")),
+        ("bt_modules", facts.get("BT_MODULES") or "none"),
+        ("keyboard_service", facts.get("KB_SERVICE", "?")),
+        ("bluetooth", facts.get("BT_SERVICE", "?")),
+        ("keyboard_mac", kb_mac if kb_mac else "none"),
+        ("paired", paired if paired else "none"),
+        ("python3", py_line),
+        ("pointer_home", facts.get("POINTER_HOME", "?")),
+        ("pointer_service", facts.get("POINTER_SERVICE", "?")),
+    )
+    for key, value in rows:
+        print(f"{key}: {value}")
     return 0
 
 

@@ -61,11 +61,23 @@ def _clear_saved_keyboard(ssh, cfg) -> None:
 def cmd_detect(args):
     def run(ssh, cfg, ip):
         info = device_mod.detect(ssh)
-        for k in (
-            "model", "label", "hostname", "img_version", "kernel",
-            "supports_bt_keyboard_service", "supports_layout_patch", "raw_model",
-        ):
-            print(f"{k}: {info.get(k, '')}")
+        # Short first-run summary (not a full sysdump).
+        kernel = (info.get("kernel") or "").strip()
+        # uname -a → keep only the version token when present
+        if kernel.startswith("Linux "):
+            parts = kernel.split()
+            kernel = parts[2] if len(parts) >= 3 else kernel
+        rows = (
+            ("device", info.get("label") or info.get("model") or "?"),
+            ("model", info.get("model") or ""),
+            ("hostname", info.get("hostname") or ""),
+            ("firmware", info.get("img_version") or ""),
+            ("kernel", kernel),
+            ("bt_keyboard", "yes" if info.get("supports_bt_keyboard_service") else "no"),
+            ("layout_patch", "yes" if info.get("supports_layout_patch") else "no"),
+        )
+        for key, value in rows:
+            print(f"{key}: {value}")
         return 0
     return _with_ssh(args, run)
 

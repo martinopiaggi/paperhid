@@ -453,14 +453,14 @@ cmd_repair_ui = cmd_settings_ui
 
 
 def cmd_detect(args) -> int:
-    """Merged detect: keyboard device detect + pointer detect dump."""
-    print("=== keyboard / device ===")
+    """Merged detect: short keyboard + pointer readiness summary."""
+    print("=== device ===")
     try:
         kb_code = _run_keyboard_command(args, kb.cmd_detect)
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         kb_code = 1
-    print("=== pointer / inputs ===")
+    print("=== pointer ===")
     try:
         from paperpointer.cli import cmd_detect as ptr_detect
 
