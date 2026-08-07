@@ -866,6 +866,40 @@ class TestRootCliInstallModes(unittest.TestCase):
         put.assert_not_called()
 
 
+class TestPointerSshRunTimeout(unittest.TestCase):
+    """paperpointer.sshutil.run must not hang when remote never exits."""
+
+    def test_run_raises_when_status_event_times_out(self):
+        from paperpointer.sshutil import run
+
+        client = MagicMock()
+        stdin = MagicMock()
+        stdout = MagicMock()
+        stderr = MagicMock()
+        channel = MagicMock()
+        channel.status_event.wait.return_value = False
+        stdout.channel = channel
+        stdin.channel = channel
+        client.exec_command.return_value = (stdin, stdout, stderr)
+
+        with self.assertRaises(TimeoutError):
+            run(client, "bluetoothctl devices Paired", timeout=1)
+
+        channel.close.assert_called()
+        stdout.read.assert_not_called()
+
+    def test_cmd_detect_bounds_bluetoothctl(self):
+        import inspect
+        from paperpointer import cli as ppcli
+
+        src = inspect.getsource(ppcli.cmd_detect)
+        self.assertIn("bluetoothctl", src)
+        self.assertTrue(
+            "timeout 4" in src or "timeout 3" in src,
+            "detect must bound bluetoothctl with a short timeout",
+        )
+
+
 class TestEntwareBootstrapUsability(unittest.TestCase):
     """Partial Entware must not be mistaken for a usable install."""
 

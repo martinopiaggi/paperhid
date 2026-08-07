@@ -218,19 +218,62 @@ echo "OK: daemon + ppd activated"
 
 
 def cmd_detect(c) -> int:
-    out, _, _ = run(
-        c,
-        "uname -a; echo ---; cat /etc/os-release 2>/dev/null | sed -n '1,8p'; "
-        "echo ---; lsmod | grep -E 'btnxp|uhid|uinput|bluetooth' || true; "
-        "echo ---; cat /proc/bus/input/devices; "
-        "echo ---; ls -la /dev/uinput /dev/input/ 2>&1; "
-        "echo ---; bluetoothctl devices Paired 2>/dev/null; "
-        "echo ---; cat /home/root/.paperwriter-keyboard 2>/dev/null; "
-        "systemctl is-active remarkable-bt-keyboard bluetooth 2>&1; "
-        "echo ---; command -v /opt/bin/python3; /opt/bin/python3 -V 2>&1",
-        timeout=30,
-    )
+    """Fast tablet probe for first-run ``python cli.py detect``.
+
+    Avoid bare ``bluetoothctl``: on Paper Pro it can hang forever when the NXP
+    controller is wedged. Bound every interactive/BT call and keep the overall
+    remote script under a short host-side deadline.
+    """
+    # shell timeout helper: prefer coreutils/busybox timeout, else background+kill
+    script = r"""
+set +e
+uname -a
+echo ---
+cat /etc/os-release 2>/dev/null | sed -n '1,8p'
+echo ---
+lsmod | grep -E 'btnxp|uhid|uinput|bluetooth' || true
+echo ---
+cat /proc/bus/input/devices 2>/dev/null
+echo ---
+ls -la /dev/uinput /dev/input/ 2>&1
+echo ---
+_bt() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 4 bluetoothctl "$@" 2>/dev/null
+    return $?
+  fi
+  bluetoothctl "$@" 2>/dev/null &
+  _bp=$!
+  sleep 4
+  kill "$_bp" 2>/dev/null
+  wait "$_bp" 2>/dev/null
+  return 0
+}
+_bt devices Paired || echo '(bluetoothctl timed out or unavailable)'
+echo ---
+cat /home/root/.paperwriter-keyboard 2>/dev/null
+systemctl is-active remarkable-bt-keyboard bluetooth 2>&1
+echo ---
+if [ -x /opt/bin/python3 ]; then
+  command -v /opt/bin/python3
+  /opt/bin/python3 -V 2>&1
+else
+  echo 'python3: missing (/opt/bin/python3)'
+fi
+"""
+    try:
+        out, err, _ = run(c, script, timeout=20)
+    except TimeoutError as exc:
+        print(f"pointer detect timed out: {exc}", file=sys.stderr)
+        print(
+            "hint: tablet BT stack may be wedged; try reboot, or "
+            "python cli.py pointer bt-status",
+            file=sys.stderr,
+        )
+        return 1
     _out(out)
+    if err.strip():
+        sys.stderr.write(err[:2000])
     return 0
 
 

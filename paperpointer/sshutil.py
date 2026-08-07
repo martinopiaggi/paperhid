@@ -43,10 +43,31 @@ def connect(host: str, password: str, user: str = DEFAULT_USER) -> paramiko.SSHC
 
 
 def run(c: paramiko.SSHClient, cmd: str, timeout: int = 60) -> tuple[str, str, int]:
-    _, o, e = c.exec_command(cmd, timeout=timeout)
-    out = o.read().decode("utf-8", "replace")
-    err = e.read().decode("utf-8", "replace")
-    code = o.channel.recv_exit_status()
+    """Run a remote command with a hard deadline.
+
+    Paramiko's channel timeout alone is not enough: if a remote tool never
+    exits (classic on Paper Pro: wedged ``bluetoothctl``), ``stdout.read()``
+    can block until the user Ctrl-C's. Mirror ``core.ssh_client.SSHClient.exec``
+    and wait on the channel status event.
+    """
+    stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
+    try:
+        stdin.channel.shutdown_write()
+    except Exception:
+        try:
+            stdin.close()
+        except Exception:
+            pass
+    channel = stdout.channel
+    if not channel.status_event.wait(timeout=timeout):
+        try:
+            channel.close()
+        except Exception:
+            pass
+        raise TimeoutError(f"remote command timed out after {timeout}s")
+    out = stdout.read().decode("utf-8", "replace")
+    err = stderr.read().decode("utf-8", "replace")
+    code = channel.recv_exit_status()
     return out, err, code
 
 
