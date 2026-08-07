@@ -53,8 +53,9 @@ class TestPasswordPrecedence(unittest.TestCase):
         self.assertEqual(resolve_password(None, use_config=False), "")
 
     def test_require_password_raises(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             require_password(None, use_config=False)
+        self.assertIn("PAPERHID_PASSWORD", str(ctx.exception))
 
     def test_config_used_when_env_empty(self):
         with patch("core.config.load", return_value={"password_b64": ""}):

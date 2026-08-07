@@ -4,10 +4,10 @@ Precedence:
 
   1. CLI ``--password``
   2. ``PAPERHID_PASSWORD``
-  3. Legacy aliases (still accepted)
-  4. Host-side saved config (``--save-password``)
+  3. Legacy env aliases (still accepted)
+  4. Optional legacy host config password (read-only, if present)
 
-Never prints the password.
+Never prints the password. Prefer setting ``PAPERHID_PASSWORD``.
 """
 from __future__ import annotations
 
@@ -90,7 +90,6 @@ def require_password(cli_password: Optional[str] = None, *, use_config: bool = T
     pw = resolve_password(cli_password, use_config=use_config)
     if not pw:
         raise ValueError(
-            "SSH password required. Pass --password, set PAPERHID_PASSWORD, "
-            "or save config with --save-password after a successful connect."
+            "SSH password required. Set PAPERHID_PASSWORD or pass --password."
         )
     return pw

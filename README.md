@@ -40,7 +40,7 @@ export PAPERHID_PASSWORD='your-root-password'
 
 ```bash
 python cli.py detect
-python cli.py install --all --save-password
+python cli.py install --all
 python cli.py scan
 python cli.py pair --name YourKeyboard
 python cli.py pair --name YourMouse
@@ -53,7 +53,7 @@ Install the tablet services once, pair your devices, then unplug. **Keyboard and
 - Missing tablet Python: install **auto-bootstraps Entware + python3** (tablet internet, a few minutes, ~80 MB free on `/home`).
 - Keyboard-only: `python cli.py install --keyboard`. Mouse later: `python cli.py install --pointer`.
 
-Password order: `--password` → `PAPERHID_PASSWORD` → legacy env aliases → saved config (`--save-password` after a successful connect).
+Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`. Legacy env aliases still work.
 
 ## Commands
 

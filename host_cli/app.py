@@ -21,7 +21,6 @@ from host_cli.errors import CliError
 from host_cli.session import (
     host_from_args,
     keyboard_session,
-    maybe_save_password,
     password_from_args,
     pointer_session,
 )
@@ -29,23 +28,17 @@ from host_cli.session import (
 # Re-export names tests/patches historically found on the root cli module.
 _host_from_args = host_from_args
 _password_from_args = password_from_args
-_maybe_save_password = maybe_save_password
 _pointer_session = pointer_session
 _keyboard_session = keyboard_session
 
 
 def _kb_args_view(args):
-    """Namespace for keyboard handlers.
-
-    The unified CLI owns credential persistence, so delegated handlers always
-    connect with ``save_password=False``.
-    """
+    """Namespace for keyboard handlers (host normalized onto ``ip``/``host``)."""
     host = host_from_args(args)
     return argparse.Namespace(
         ip=host,
         host=host,
         password=getattr(args, "password", None),
-        save_password=False,
         timeout=getattr(args, "timeout", 15),
         wait=getattr(args, "wait", 12),
         scan_timeout=getattr(args, "scan_timeout", 5),
@@ -57,11 +50,8 @@ def _kb_args_view(args):
 
 
 def _run_keyboard_command(args, handler) -> int:
-    """Run a keyboard command; save credentials only when the command succeeds."""
-    code = handler(_kb_args_view(args)) or 0
-    if code == 0:
-        maybe_save_password(args, host_from_args(args), password_from_args(args))
-    return code
+    """Run a keyboard command with normalized connection args."""
+    return handler(_kb_args_view(args)) or 0
 
 
 def _mode_exit(mode: str, kb_code: int, ptr_code: int) -> int:
@@ -486,16 +476,13 @@ def shared_root_flags(*, for_subparser: bool = False) -> argparse.ArgumentParser
     """SSH/auth flags that work before *or* after the subcommand."""
     shared = argparse.ArgumentParser(add_help=False)
     default = argparse.SUPPRESS if for_subparser else None
-    save_default = argparse.SUPPRESS if for_subparser else False
     timeout_default = argparse.SUPPRESS if for_subparser else 15
     shared.add_argument("--ip", default=default, help="Tablet IP (default 10.11.99.1)")
     shared.add_argument("--host", default=default, help="Alias for --ip")
-    shared.add_argument("--password", default=default, help="SSH password")
     shared.add_argument(
-        "--save-password",
-        action="store_true",
-        default=save_default,
-        help="Save password to ~/.paperwriter/config.json",
+        "--password",
+        default=default,
+        help="SSH password (prefer PAPERHID_PASSWORD env)",
     )
     shared.add_argument("--timeout", type=int, default=timeout_default)
     return shared
@@ -508,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="PaperHid: Bluetooth keyboard + mouse/pointer for reMarkable Paper Pro",
         parents=[parent_shared],
     )
-    p.set_defaults(ip=None, host=None, password=None, save_password=False, timeout=15)
+    p.set_defaults(ip=None, host=None, password=None, timeout=15)
     child_shared = shared_root_flags(for_subparser=True)
     sub = p.add_subparsers(dest="command", required=True)
 

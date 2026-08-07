@@ -3,7 +3,8 @@
     python cli.py install --keyboard | --pointer | --all
     python cli.py status | scan | pair | …
 
-Password: --password → PAPERHID_PASSWORD → legacy env aliases → saved config.
+Password: --password → PAPERHID_PASSWORD → legacy env aliases
+(optional legacy: saved host config if present).
 
 Implementation lives in the ``host_cli`` package (single CLI module).
 """
@@ -33,7 +34,6 @@ from host_cli.app import (  # noqa: F401 — explicit names used by tests/patche
 from host_cli import keyboard as kb  # noqa: F401
 from host_cli.session import (  # noqa: F401
     host_from_args as _host_from_args,
-    maybe_save_password as _maybe_save_password,
     password_from_args as _password_from_args,
 )
 from core import config  # noqa: F401 — tests patch root_cli.config

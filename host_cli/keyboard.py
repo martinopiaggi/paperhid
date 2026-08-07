@@ -1,7 +1,7 @@
 """Keyboard host commands (scan / pair / BT service).
 
 Part of the unified ``host_cli`` module. Prefer ``python cli.py …``.
-Connection + credential save policy lives in ``host_cli.session``.
+Connection policy lives in ``host_cli.session``.
 """
 from __future__ import annotations
 
@@ -9,24 +9,16 @@ import sys
 
 from core import config, service_installer, bluetooth, layout_patcher
 from core import device as device_mod
-from host_cli.errors import CliError
-from host_cli.session import host_from_args, keyboard_session, maybe_save_password, password_from_args
+from host_cli.errors import CliError  # re-exported for keyboard_cli / tests
+from host_cli.session import keyboard_session
+
+__all__ = ["CliError"]
 
 
 def _with_ssh(args, fn):
-    """Run *fn(ssh, cfg, ip)* on a keyboard session.
-
-    When called via the root dispatcher, ``args.save_password`` is forced False
-    and the dispatcher saves after a zero exit. Direct callers may set
-    ``save_password`` and persist on success here.
-    """
-    host = host_from_args(args)
-    password = password_from_args(args)
-    with keyboard_session(args, persist_password=False) as (ssh, host, password):
-        code = fn(ssh, config.load(), host) or 0
-    if code == 0:
-        maybe_save_password(args, host, password)
-    return code
+    """Run *fn(ssh, cfg, ip)* on a keyboard session."""
+    with keyboard_session(args) as (ssh, host, _password):
+        return fn(ssh, config.load(), host) or 0
 
 
 def _saved_keyboard_mac(ssh, cfg) -> str:

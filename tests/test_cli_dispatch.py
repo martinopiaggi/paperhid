@@ -647,19 +647,12 @@ class TestPointerProbeParse(unittest.TestCase):
 
 
 class TestDelegatedKeyboardCommands(unittest.TestCase):
-    def test_successful_command_saves_requested_password(self):
+    def test_save_password_flag_removed(self):
         import cli as root_cli
 
-        with patch.object(root_cli.kb, "cmd_scan", return_value=0) as handler:
-            with patch("host_cli.app.maybe_save_password") as save:
-                code = root_cli.main(
-                    ["scan", "--password", "pw", "--save-password"]
-                )
-
-        self.assertEqual(code, 0)
-        self.assertFalse(handler.call_args.args[0].save_password)
-        save.assert_called_once()
-        self.assertEqual(save.call_args.args[1:], ("10.11.99.1", "pw"))
+        p = root_cli.build_parser()
+        with self.assertRaises(SystemExit):
+            _parse_expect_exit(p, ["scan", "--password", "pw", "--save-password"])
 
     def test_delegated_cli_error_keeps_its_exit_code(self):
         import cli as root_cli
@@ -699,29 +692,21 @@ class TestRootCliInstallModes(unittest.TestCase):
             _parse_expect_exit(p, ["install", "--keyboard", "--pointer"])
 
     def test_global_flags_before_and_after_subcommand(self):
-        """README form: install --all --save-password (flag after subcommand)."""
+        """Flags work before or after the subcommand (README-style)."""
         import cli as root_cli
 
         p = root_cli.build_parser()
-        # README main path — must not argparse-reject.
-        after = p.parse_args(
-            ["install", "--all", "--save-password", "--password", "pw"]
-        )
+        after = p.parse_args(["install", "--all", "--password", "pw"])
         self.assertTrue(after.all)
-        self.assertTrue(after.save_password)
         self.assertEqual(after.password, "pw")
-        # Also still works before the subcommand.
         before = p.parse_args(
-            ["--save-password", "--password", "x", "--host", "1.2.3.4", "install", "--all"]
+            ["--password", "x", "--host", "1.2.3.4", "install", "--all"]
         )
-        self.assertTrue(before.save_password)
         self.assertEqual(before.password, "x")
         self.assertEqual(before.host, "1.2.3.4")
         self.assertTrue(before.all)
-        # Detect with flag after
         det = p.parse_args(["detect", "--timeout", "9"])
         self.assertEqual(det.timeout, 9)
-        self.assertFalse(det.save_password)
 
     def test_install_service_alias_removed(self):
         """Never-released PaperWriter-style aliases are not public."""
@@ -733,8 +718,8 @@ class TestRootCliInstallModes(unittest.TestCase):
         with self.assertRaises(SystemExit):
             _parse_expect_exit(p, ["uninstall-service"])
 
-    def test_failed_auth_never_saves_password(self):
-        """--save-password must not write config when connect fails."""
+    def test_failed_auth_returns_nonzero(self):
+        """Failed SSH must fail install cleanly."""
         import argparse
         import cli as root_cli
 
@@ -745,7 +730,6 @@ class TestRootCliInstallModes(unittest.TestCase):
             host=None,
             ip="10.11.99.1",
             password="wrong",
-            save_password=True,
             timeout=15,
             wait=12,
         )
@@ -755,15 +739,8 @@ class TestRootCliInstallModes(unittest.TestCase):
                     "host_cli.session.open_pointer_paramiko",
                     side_effect=RuntimeError("auth failed"),
                 ):
-                    with patch.object(root_cli.config, "save") as save:
-                        with patch("host_cli.session.maybe_save_password") as maybe:
-                            # Drive real cmd_install path: connect fails before save
-                            code = root_cli.cmd_install(args)
+                    code = root_cli.cmd_install(args)
         self.assertEqual(code, 1)
-        # Connection failed: save helper must not have been called with success path.
-        # cmd_install only calls maybe_save_password after open succeeds.
-        maybe.assert_not_called()
-        save.assert_not_called()
 
     def test_install_all_skips_pointer_on_keyboard_fail(self):
         import cli as root_cli
@@ -775,7 +752,6 @@ class TestRootCliInstallModes(unittest.TestCase):
             host=None,
             ip="10.11.99.1",
             password="x",
-            save_password=False,
             timeout=15,
             wait=12,
         )
@@ -799,7 +775,6 @@ class TestRootCliInstallModes(unittest.TestCase):
             host=None,
             ip="10.11.99.1",
             password="x",
-            save_password=False,
             timeout=15,
             wait=12,
         )
