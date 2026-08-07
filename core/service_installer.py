@@ -126,7 +126,7 @@ def _seed_persistent(ssh, service_content, bootstrap_unit):
     if free < _MIN_ROOT_FREE_KB:
         raise RuntimeError(
             f"Root filesystem has only {free} KB free "
-            f"(need ≥ {_MIN_ROOT_FREE_KB} KB). Free space, then retry."
+            f"(need at least {_MIN_ROOT_FREE_KB} KB). Free space, then retry."
         )
 
     _remount_rw(ssh)

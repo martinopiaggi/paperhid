@@ -55,6 +55,35 @@ def _with_ssh(args, fn):
         ssh.disconnect()
 
 
+def _saved_keyboard_mac(ssh, cfg) -> str:
+    """Return the device-side keyboard MAC, falling back to host config."""
+    candidates = []
+    try:
+        out, _, code = ssh.exec(
+            f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
+            timeout=5,
+        )
+        if code == 0:
+            candidates.append((out or "").strip())
+    except Exception:
+        pass
+    candidates.append((cfg or {}).get("keyboard_mac") or "")
+    for candidate in candidates:
+        if candidate:
+            try:
+                return bluetooth.normalize_mac(candidate)
+            except ValueError:
+                continue
+    return ""
+
+
+def _clear_saved_keyboard(ssh, cfg) -> None:
+    ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
+    cfg["keyboard_mac"] = ""
+    cfg["keyboard_name"] = ""
+    config.save(cfg)
+
+
 def cmd_detect(args):
     def run(ssh, cfg, ip):
         info = device_mod.detect(ssh)
@@ -195,32 +224,14 @@ def cmd_pair(args):
             name = bluetooth.get_device_name(ssh, mac) or mac
         role = bluetooth.classify_device_role(info, name)
         print(f"role: {role}")
+        mac = bluetooth.normalize_mac(mac)
 
         if role == "pointer":
             # Mouse/touchpad: leave keyboard MAC alone; clear if it wrongly
             # pointed at this pointer (legacy bug).
-            saved = ""
-            try:
-                out, _, code = ssh.exec(
-                    f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
-                    timeout=5,
-                )
-                if code == 0:
-                    saved = (out or "").strip()
-            except Exception:
-                pass
-            saved = saved or (cfg.get("keyboard_mac") or "")
-            try:
-                if saved and bluetooth.normalize_mac(saved) == bluetooth.normalize_mac(
-                    mac
-                ):
-                    ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
-                    cfg["keyboard_mac"] = ""
-                    cfg["keyboard_name"] = ""
-                    config.save(cfg)
-                    print("cleared keyboard MAC (was this pointer)")
-            except ValueError:
-                pass
+            if _saved_keyboard_mac(ssh, cfg) == mac:
+                _clear_saved_keyboard(ssh, cfg)
+                print("cleared keyboard MAC (was this pointer)")
             print(f"paired_ok: {mac} {name} (pointer — keyboard unchanged)")
             print(
                 "note: keyboard + mouse can stay paired together; "
@@ -239,36 +250,21 @@ def cmd_pair(args):
             return 0
 
         # role == keyboard: update reconnect MAC; replace previous keyboard only.
-        old_kb = ""
-        try:
-            out, _, code = ssh.exec(
-                f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
-                timeout=5,
-            )
-            if code == 0:
-                old_kb = (out or "").strip()
-        except Exception:
-            pass
-        old_kb = old_kb or (cfg.get("keyboard_mac") or "")
-        try:
-            if old_kb:
-                old_kb = bluetooth.normalize_mac(old_kb)
-                if old_kb != bluetooth.normalize_mac(mac):
-                    old_info = bluetooth.get_device_info(ssh, old_kb)
-                    old_role = bluetooth.classify_device_role(old_info)
-                    if old_role == "pointer":
-                        print(
-                            f"note: previous keyboard MAC {old_kb} is a pointer; "
-                            "leaving it paired"
-                        )
-                    elif old_role == "keyboard":
-                        print(f"replacing previous keyboard {old_kb}")
-                        try:
-                            bluetooth.remove(ssh, old_kb)
-                        except Exception as e:
-                            print(f"warning: could not remove old keyboard: {e}")
-        except ValueError:
-            old_kb = ""
+        old_kb = _saved_keyboard_mac(ssh, cfg)
+        if old_kb and old_kb != mac:
+            old_info = bluetooth.get_device_info(ssh, old_kb)
+            old_role = bluetooth.classify_device_role(old_info)
+            if old_role == "pointer":
+                print(
+                    f"note: previous keyboard MAC {old_kb} is a pointer; "
+                    "leaving it paired"
+                )
+            elif old_role == "keyboard":
+                print(f"replacing previous keyboard {old_kb}")
+                try:
+                    bluetooth.remove(ssh, old_kb)
+                except Exception as e:
+                    print(f"warning: could not remove old keyboard: {e}")
 
         service_installer.save_keyboard_mac(ssh, mac)
         cfg["keyboard_mac"] = mac
@@ -297,52 +293,21 @@ def cmd_save_mac(args):
 
 def cmd_unpair(args):
     def run(ssh, cfg, ip):
-        mac = args.mac or cfg.get("keyboard_mac") or ""
-        if not mac:
-            try:
-                out, _, code = ssh.exec(
-                    f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
-                    timeout=5,
-                )
-                if code == 0:
-                    mac = (out or "").strip()
-            except Exception:
-                pass
-        if not mac:
-            print("error: no MAC (pass --mac)", file=sys.stderr)
-            return 2
         try:
-            mac = bluetooth.normalize_mac(mac)
+            mac = bluetooth.normalize_mac(args.mac) if args.mac else _saved_keyboard_mac(ssh, cfg)
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
+            return 2
+        if not mac:
+            print("error: no MAC (pass --mac)", file=sys.stderr)
             return 2
 
         bluetooth.remove(ssh, mac)
         print(f"removed {mac}")
 
         # Only clear keyboard reconnect file if we unpaired that keyboard.
-        saved = ""
-        try:
-            out, _, code = ssh.exec(
-                f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
-                timeout=5,
-            )
-            if code == 0:
-                saved = (out or "").strip()
-        except Exception:
-            pass
-        saved = saved or (cfg.get("keyboard_mac") or "")
-        clear_kb = False
-        try:
-            if saved and bluetooth.normalize_mac(saved) == mac:
-                clear_kb = True
-        except ValueError:
-            clear_kb = not args.mac  # legacy: bare unpair with bad saved value
-        if clear_kb:
-            ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
-            cfg["keyboard_mac"] = ""
-            cfg["keyboard_name"] = ""
-            config.save(cfg)
+        if _saved_keyboard_mac(ssh, cfg) == mac:
+            _clear_saved_keyboard(ssh, cfg)
             print("keyboard MAC cleared")
         else:
             print("keyboard MAC left unchanged (other device removed)")

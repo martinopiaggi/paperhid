@@ -24,11 +24,14 @@ def _df_avail_kb(ssh, mountpoint):
 def _preflight_space(ssh):
     root_free = _df_avail_kb(ssh, "/")
     if root_free < 2048:
-        raise RuntimeError(f"Root filesystem has only {root_free} KB free (need ≥ 2 MB).")
+        raise RuntimeError(
+            f"Root filesystem has only {root_free} KB free (need at least 2 MB)."
+        )
     home_free = _df_avail_kb(ssh, "/home")
     if home_free < 80 * 1024:
         raise RuntimeError(
-            f"/home has only {home_free // 1024} MB free (need ≥ 80 MB for Python/entware)."
+            f"/home has only {home_free // 1024} MB free "
+            "(need at least 80 MB for Python/entware)."
         )
 
 
@@ -137,7 +140,7 @@ def ensure_tablet_python(ssh, status_cb=None):
     """Install Entware + Python 3 on the tablet if missing.
 
     Required by paperpointerd (mouse). Needs free space on /home and tablet
-    internet (Wi‑Fi) for the first bootstrap. Safe to re-run.
+    internet (Wi-Fi) for the first bootstrap. Safe to re-run.
     """
 
     def say(msg):
@@ -160,6 +163,6 @@ def ensure_tablet_python(ssh, status_cb=None):
     if not _tablet_python_usable(ssh):
         raise RuntimeError(
             "Tablet Python still missing after bootstrap "
-            "(/opt/bin/python3). Check tablet internet (Wi‑Fi) and free space."
+            "(/opt/bin/python3). Check tablet internet (Wi-Fi) and free space."
         )
     say("Tablet Python ready (/opt/bin/python3)")

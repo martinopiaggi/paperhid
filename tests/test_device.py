@@ -319,6 +319,29 @@ class TestRestartDisplayPrefersXovi(unittest.TestCase):
 
 
 class TestServiceResourcesPresent(unittest.TestCase):
+    def test_inactive_service_files_still_count_as_installed(self):
+        """An inactive unit must not be mistaken for a missing installation."""
+        from core import bluetooth
+
+        ssh = FakeSSH(
+            exec_map={
+                "systemctl is-active": ("inactive\n", "", 3),
+                "systemctl is-failed": ("active\n", "", 1),
+                "test -f": ("", "", 0),
+                "bluetoothctl show": ("Powered: no\n", "", 0),
+                "cat /home/root/.paperwriter-keyboard": ("", "", 1),
+            }
+        )
+
+        state = bluetooth.verify_device_state(ssh, {})
+
+        self.assertTrue(state["service_present"])
+        self.assertTrue(state["service_installed"])
+        self.assertFalse(state["service_active"])
+        self.assertTrue(
+            any("/etc/systemd/system/remarkable-bt-keyboard.service" in cmd for cmd in ssh.calls)
+        )
+
     def test_bt_script_and_unit_exist(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         script = os.path.join(root, "resources", "bt-keyboard.sh")

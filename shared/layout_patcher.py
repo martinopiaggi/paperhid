@@ -439,7 +439,7 @@ def apply_layout(
     if levels < _MIN_PATCH_LEVELS:
         raise RuntimeError(
             f"Layout patch only matched {levels} key levels "
-            f"(need ≥{_MIN_PATCH_LEVELS}); refusing partial write."
+            f"(need at least {_MIN_PATCH_LEVELS}); refusing partial write."
         )
 
     t.write_text(LAYOUT_FILE, layout_key + "\n")

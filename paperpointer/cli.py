@@ -1108,44 +1108,17 @@ def dispatch_pointer(args, connection) -> int:
     pointer operations). Callers own connect/close.
     """
     cmd = getattr(args, "cmd", None) or getattr(args, "pointer_cmd", None)
-    if cmd == "detect":
-        return cmd_detect(connection)
-    if cmd == "probe":
-        return cmd_probe(connection)
-    if cmd == "bt-status":
-        return cmd_bt_status(connection)
-    if cmd == "bt-recover":
-        return cmd_bt_recover(connection)
-    if cmd == "install":
-        return cmd_install(connection)
-    if cmd == "uninstall":
-        return cmd_uninstall(connection)
-    if cmd == "status":
-        return cmd_status(connection)
-    if cmd == "restart":
-        return cmd_restart(connection)
+    if cmd in POINTER_SIMPLE_COMMANDS:
+        handler = globals()[f"cmd_{cmd.replace('-', '_')}"]
+        return handler(connection)
     if cmd == "cursor-rate":
         return cmd_cursor_rate(connection, args.hz)
     if cmd == "cursor-style":
         return cmd_cursor_style(connection, args.style)
     if cmd == "input-monitor":
         return cmd_input_monitor(connection, max(1, min(30, args.seconds)))
-    if cmd == "watch":
-        return cmd_watch(connection)
-    if cmd == "reconnect":
-        return cmd_reconnect(connection)
     if cmd == "test-tap":
         return cmd_test_tap(connection, args.x, args.y)
-    if cmd == "enable-cursor":
-        return cmd_enable_cursor(connection)
-    if cmd == "enable-settings-ui":
-        return cmd_enable_settings_ui(connection)
-    if cmd == "disable-settings-ui":
-        return cmd_disable_settings_ui(connection)
-    if cmd == "settings-ui-check":
-        return cmd_settings_ui_check(connection)
-    if cmd == "stock-ui":
-        return cmd_stock_ui(connection)
     return 1
 
 

@@ -11,6 +11,7 @@ from shared.constants import (
     SCRIPT_DIR,
     SERVICE_NAME,
     SERVICE_PERSISTENT_PATH,
+    SERVICE_VOLATILE_PATH,
     SCRIPT_REMOTE_PATH,
 )
 from shared.transport import Transport
@@ -43,8 +44,8 @@ def normalize_mac(mac: str) -> str:
 
 _NXP_HINT = (
     "Paper Pro BT controller often sticks after sleep (NXP btnxpuart power-save).\n"
-    "Fix: reboot → unlock → wait ~30s → keyboard pairing mode "
-    "(disconnect from Windows first) → retry.\n"
+    "Fix: reboot -> unlock -> wait ~30s -> keyboard pairing mode "
+    "(disconnect from Windows first) -> retry.\n"
     "Do not: modprobe -r btnxpuart  or  hciconfig hci0 down"
 )
 
@@ -53,7 +54,7 @@ _NXP_SCAN_BROKEN = (
     "The NXP chip powers on, but LE scan HCI (0x2005/0x2041) times out (-110). "
     "BlueZ then reports InProgress and never lists devices.\n\n"
     "Firmware/driver limitation, not a wrong password or MAC.\n"
-    "Try: reboot → unlock → wait ~30s → pairing mode → Scan again.\n"
+    "Try: reboot -> unlock -> wait ~30s -> pairing mode -> Scan again.\n"
     "Do not: modprobe -r btnxpuart  or  hciconfig hci0 down"
 )
 

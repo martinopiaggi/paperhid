@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import contextmanager
 
-from core import config, service_installer, bluetooth, device as device_mod
+from core import config, bluetooth, device as device_mod
 from core.connection import open_keyboard_ssh, open_pointer_paramiko
 from core.credentials import require_password, resolve_host
 from core.status_merge import (
@@ -20,15 +21,12 @@ from core.status_merge import (
     format_status_report,
     merge_exit_codes,
 )
-from core.ssh_client import SSHClient
 
 import keyboard_cli as kb
 
 
-class CliError(Exception):
-    def __init__(self, message, code=2):
-        super().__init__(message)
-        self.code = code
+# Keep one CLI error type across the unified and delegated command handlers.
+CliError = kb.CliError
 
 
 def _host_from_args(args) -> str:
@@ -56,20 +54,17 @@ def _maybe_save_password(args, host: str, password: str) -> None:
     config.save(cfg)
 
 
-def _kb_args_view(args, *, save_password: bool | None = None):
+def _kb_args_view(args):
     """Namespace compatible with keyboard_cli handlers.
 
-    Default: do **not** let nested keyboard_cli save before our own post-auth
-    save policy (``save_password=False``). Pass ``True`` only after a successful
-    connection when the user requested ``--save-password``.
+    The unified CLI owns credential persistence, so delegated handlers always
+    connect with ``save_password=False``.
     """
     host = _host_from_args(args)
-    if save_password is None:
-        save_password = False
     ns = argparse.Namespace(
         ip=host,
         password=getattr(args, "password", None),
-        save_password=save_password,
+        save_password=False,
         timeout=getattr(args, "timeout", 15),
         wait=getattr(args, "wait", 12),
         scan_timeout=getattr(args, "scan_timeout", 5),
@@ -81,26 +76,73 @@ def _kb_args_view(args, *, save_password: bool | None = None):
     return ns
 
 
+def _run_keyboard_command(args, handler) -> int:
+    """Run a delegated keyboard command and save credentials only on success."""
+    code = handler(_kb_args_view(args)) or 0
+    if code == 0:
+        _maybe_save_password(args, _host_from_args(args), _password_from_args(args))
+    return code
+
+
+@contextmanager
+def _pointer_session(args):
+    """Open pointer Paramiko after auth; save credentials only on success."""
+    host = _host_from_args(args)
+    password = _password_from_args(args)
+    client = None
+    try:
+        client, host, password = open_pointer_paramiko(host=host, password=password)
+        _maybe_save_password(args, host, password)
+        yield client
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
+@contextmanager
+def _keyboard_session(args):
+    """Open keyboard SSH after auth; save credentials only on success."""
+    host = _host_from_args(args)
+    password = _password_from_args(args)
+    ssh = None
+    try:
+        ssh, host, password = open_keyboard_ssh(
+            host=host,
+            password=password,
+            timeout=getattr(args, "timeout", 15),
+        )
+        _maybe_save_password(args, host, password)
+        yield ssh
+    finally:
+        if ssh is not None:
+            try:
+                ssh.disconnect()
+            except Exception:
+                pass
+
+
+def _mode_exit(mode: str, kb_code: int, ptr_code: int) -> int:
+    if mode == "keyboard":
+        return kb_code
+    if mode == "pointer":
+        return ptr_code
+    return kb_code if kb_code != 0 else ptr_code
+
+
 # --- Combined commands -------------------------------------------------------
 
 
 def cmd_install(args) -> int:
     mode = _install_mode(args)
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    saved = False
 
     kb_code = 0
     if mode in ("keyboard", "all"):
         print("=== install keyboard (BT service) ===")
         try:
-            # keyboard_cli connects first; save only after that handler succeeds
-            kb_code = kb.cmd_install_service(
-                _kb_args_view(args, save_password=False)
-            )
-            if kb_code == 0 and not saved:
-                _maybe_save_password(args, host, password)
-                saved = True
+            kb_code = _run_keyboard_command(args, kb.cmd_install_service)
         except Exception as e:
             print(f"keyboard install error: {e}", file=sys.stderr)
             kb_code = 1
@@ -118,22 +160,15 @@ def cmd_install(args) -> int:
             "Note: needs tablet Python. Missing Entware is installed automatically "
             "(tablet Wi-Fi required for first bootstrap)."
         )
-        c = None
         try:
-            c, _, _ = open_pointer_paramiko(host=host, password=password)
-            if not saved:
-                _maybe_save_password(args, host, password)
-                saved = True
             from paperpointer.cli import cmd_install as ptr_install
 
             bootstrap = not getattr(args, "no_bootstrap", False)
-            ptr_code = ptr_install(c, bootstrap=bootstrap)
+            with _pointer_session(args) as c:
+                ptr_code = ptr_install(c, bootstrap=bootstrap)
         except Exception as e:
             print(f"pointer install error: {e}", file=sys.stderr)
             ptr_code = 1
-        finally:
-            if c is not None:
-                c.close()
         if ptr_code != 0 and mode == "all" and kb_code == 0:
             print(
                 "install --all: pointer failed after keyboard succeeded "
@@ -141,21 +176,12 @@ def cmd_install(args) -> int:
                 file=sys.stderr,
             )
 
-    if mode == "keyboard":
-        return kb_code
-    if mode == "pointer":
-        return ptr_code
-    return kb_code if kb_code != 0 else ptr_code
+    return _mode_exit(mode, kb_code, ptr_code)
 
 
 def cmd_bootstrap_python(args) -> int:
     """Install Entware + Python 3 on a vanilla tablet (pointer prerequisite)."""
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    c = None
     try:
-        c, _, _ = open_pointer_paramiko(host=host, password=password)
-        _maybe_save_password(args, host, password)
         from paperpointer.cli import bootstrap_tablet_python, preflight_tablet_python
 
         print(
@@ -163,8 +189,9 @@ def cmd_bootstrap_python(args) -> int:
             "Tablet needs Wi-Fi; this can take several minutes.",
             flush=True,
         )
-        bootstrap_tablet_python(c)
-        code = preflight_tablet_python(c)
+        with _pointer_session(args) as c:
+            bootstrap_tablet_python(c)
+            code = preflight_tablet_python(c)
         if code != 0:
             print("bootstrap finished but python still missing", file=sys.stderr)
             return code
@@ -173,52 +200,30 @@ def cmd_bootstrap_python(args) -> int:
     except Exception as e:
         print(f"bootstrap-python error: {e}", file=sys.stderr)
         return 1
-    finally:
-        if c is not None:
-            c.close()
 
 
 def cmd_uninstall(args) -> int:
     mode = _install_mode(args)
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    saved = False
     kb_code = 0
     if mode in ("keyboard", "all"):
         print("=== uninstall keyboard ===")
         try:
-            kb_code = kb.cmd_uninstall_service(
-                _kb_args_view(args, save_password=False)
-            )
-            if kb_code == 0 and not saved:
-                _maybe_save_password(args, host, password)
-                saved = True
+            kb_code = _run_keyboard_command(args, kb.cmd_uninstall_service)
         except Exception as e:
             print(f"keyboard uninstall error: {e}", file=sys.stderr)
             kb_code = 1
     ptr_code = 0
     if mode in ("pointer", "all"):
         print("=== uninstall pointer ===")
-        c = None
         try:
-            c, _, _ = open_pointer_paramiko(host=host, password=password)
-            if not saved:
-                _maybe_save_password(args, host, password)
-                saved = True
             from paperpointer.cli import cmd_uninstall as ptr_uninstall
 
-            ptr_code = ptr_uninstall(c)
+            with _pointer_session(args) as c:
+                ptr_code = ptr_uninstall(c)
         except Exception as e:
             print(f"pointer uninstall error: {e}", file=sys.stderr)
             ptr_code = 1
-        finally:
-            if c is not None:
-                c.close()
-    if mode == "keyboard":
-        return kb_code
-    if mode == "pointer":
-        return ptr_code
-    return kb_code if kb_code != 0 else ptr_code
+    return _mode_exit(mode, kb_code, ptr_code)
 
 
 def _install_mode(args) -> str:
@@ -256,14 +261,10 @@ def cmd_set_layout(args) -> int:
             )
             return 2
 
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    ssh = None
     try:
-        ssh, host, password = open_keyboard_ssh(host=host, password=password)
-        _maybe_save_password(args, host, password)
         print(f"=== set-layout {display} ({key}) ===")
-        layout_patcher.apply_layout(ssh, key, status_cb=print)
+        with _keyboard_session(args) as ssh:
+            layout_patcher.apply_layout(ssh, key, status_cb=print)
         cfg = config.load()
         cfg["keyboard_layout"] = display
         config.save(cfg)
@@ -272,12 +273,6 @@ def cmd_set_layout(args) -> int:
     except Exception as e:
         print(f"set-layout error: {e}", file=sys.stderr)
         return 1
-    finally:
-        if ssh is not None:
-            try:
-                ssh.disconnect()
-            except Exception:
-                pass
 
 
 def parse_pointer_probe_output(out: str) -> dict:
@@ -294,60 +289,53 @@ def parse_pointer_probe_output(out: str) -> dict:
     ``UNIT_YES`` is also accepted (either path) for older fixtures.
     ``unit_file_present`` is true if either ``/etc`` or ``/usr`` unit exists.
     """
-    home_present = False
-    unit_etc = False
-    unit_usr = False
-    unit_legacy = False
-    is_active = None  # type: bool | None
-    is_failed = False
-    for raw in (out or "").splitlines():
-        ln = raw.strip()
-        if not ln:
-            continue
-        if ln == "HOME_YES":
-            home_present = True
-        elif ln == "HOME_NO":
-            home_present = False
-        elif ln == "UNIT_ETC_YES":
-            unit_etc = True
-        elif ln == "UNIT_ETC_NO":
-            unit_etc = False
-        elif ln == "UNIT_USR_YES":
-            unit_usr = True
-        elif ln == "UNIT_USR_NO":
-            unit_usr = False
-        elif ln == "UNIT_YES":
-            unit_legacy = True
-        elif ln == "UNIT_NO":
-            unit_legacy = False
-        elif ln.startswith("ACTIVE:"):
-            state = ln.split(":", 1)[1].strip().lower()
-            if state == "active":
-                is_active = True
-            else:
-                # inactive, failed, dead, not-found, …
-                is_active = False
-        elif ln.startswith("FAILED:"):
-            state = ln.split(":", 1)[1].strip().lower()
-            # is-failed prints "failed" or "active" (not failed) — never use as is_active
-            is_failed = state == "failed"
-    unit_file_present = unit_etc or unit_usr or unit_legacy
-    return {
-        "home_present": home_present,
-        "unit_file_present": unit_file_present,
-        "unit_etc_present": unit_etc,
-        "unit_usr_present": unit_usr,
-        "is_active": is_active,
-        "is_failed": is_failed,
-        "raw_lines": [ln.strip() for ln in (out or "").splitlines() if ln.strip()],
+    marker_values = {
+        "HOME_YES": ("home_present", True),
+        "HOME_NO": ("home_present", False),
+        "UNIT_ETC_YES": ("unit_etc_present", True),
+        "UNIT_ETC_NO": ("unit_etc_present", False),
+        "UNIT_USR_YES": ("unit_usr_present", True),
+        "UNIT_USR_NO": ("unit_usr_present", False),
+        "UNIT_YES": ("unit_legacy_present", True),
+        "UNIT_NO": ("unit_legacy_present", False),
     }
+    facts = {
+        "home_present": False,
+        "unit_etc_present": False,
+        "unit_usr_present": False,
+        "unit_legacy_present": False,
+        "is_active": None,
+        "is_failed": False,
+    }
+    raw_lines = [line.strip() for line in (out or "").splitlines() if line.strip()]
+    seen: set[str] = set()
+    for line in raw_lines:
+        if line in marker_values:
+            key, value = marker_values[line]
+            facts[key] = value
+            seen.add(line.rsplit("_", 1)[0])
+        elif line.startswith("ACTIVE:"):
+            facts["is_active"] = line.partition(":")[2].strip().lower() == "active"
+            seen.add("ACTIVE")
+        elif line.startswith("FAILED:"):
+            facts["is_failed"] = line.partition(":")[2].strip().lower() == "failed"
+            seen.add("FAILED")
+
+    facts["unit_file_present"] = any(
+        facts[key]
+        for key in ("unit_etc_present", "unit_usr_present", "unit_legacy_present")
+    )
+    facts["complete"] = (
+        "HOME" in seen
+        and ("UNIT" in seen or {"UNIT_ETC", "UNIT_USR"} <= seen)
+        and {"ACTIVE", "FAILED"} <= seen
+    )
+    facts["raw_lines"] = raw_lines
+    return facts
 
 
 def cmd_status(args) -> int:
     """Merged status: labeled sections; optional/residual components exit 0."""
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-
     keyboard_lines: list[str] = []
     keyboard = ComponentStatus(
         state="unknown",
@@ -355,33 +343,27 @@ def cmd_status(args) -> int:
         exit_code=0,
         label="keyboard",
     )
-    ssh = None
     try:
-        ssh, _, _ = open_keyboard_ssh(
-            host=host,
-            password=password,
-            timeout=getattr(args, "timeout", 15),
-        )
-        _maybe_save_password(args, host, password)
-        info = device_mod.detect(ssh)
-        cfg = config.load()
-        state = bluetooth.verify_device_state(ssh, cfg)
-        # Drop host-side keyboard_mac if tablet rejected it as a pointer
-        # (multi-device: mouse must not stick in keyboard config).
-        if not state.get("keyboard_mac") and cfg.get("keyboard_mac"):
-            cfg["keyboard_mac"] = ""
-            cfg["keyboard_name"] = ""
-            config.save(cfg)
-        present = bool(state.get("service_present") or state.get("service_active"))
-        keyboard = classify_keyboard_status(
-            service_present=present,
-            service_active=bool(state.get("service_active")) if present else None,
-            service_failed=bool(state.get("service_failed")),
-        )
-        keyboard_lines.append(f"device: {info.get('label')} ({info.get('model')})")
-        keyboard_lines.append(f"img_version: {info.get('img_version')}")
-        for k, v in state.items():
-            keyboard_lines.append(f"{k}: {v}")
+        with _keyboard_session(args) as ssh:
+            info = device_mod.detect(ssh)
+            cfg = config.load()
+            state = bluetooth.verify_device_state(ssh, cfg)
+            # Drop host-side keyboard_mac if tablet rejected it as a pointer
+            # (multi-device: mouse must not stick in keyboard config).
+            if not state.get("keyboard_mac") and cfg.get("keyboard_mac"):
+                cfg["keyboard_mac"] = ""
+                cfg["keyboard_name"] = ""
+                config.save(cfg)
+            present = bool(state.get("service_present") or state.get("service_active"))
+            keyboard = classify_keyboard_status(
+                service_present=present,
+                service_active=bool(state.get("service_active")) if present else None,
+                service_failed=bool(state.get("service_failed")),
+            )
+            keyboard_lines.append(f"device: {info.get('label')} ({info.get('model')})")
+            keyboard_lines.append(f"img_version: {info.get('img_version')}")
+            for k, v in state.items():
+                keyboard_lines.append(f"{k}: {v}")
     except Exception as e:
         keyboard_lines.append(f"error: {e}")
         keyboard = ComponentStatus(
@@ -390,9 +372,6 @@ def cmd_status(args) -> int:
             exit_code=1,
             label="keyboard",
         )
-    finally:
-        if ssh is not None:
-            ssh.disconnect()
 
     pointer = classify_pointer_status(
         home_present=False,
@@ -400,10 +379,7 @@ def cmd_status(args) -> int:
         is_active=None,
     )
     settings_lines: list[str] | None = None
-    c = None
     try:
-        c, _, _ = open_pointer_paramiko(host=host, password=password)
-        _maybe_save_password(args, host, password)
         from paperpointer.sshutil import (
             REMOTE_HOME,
             UNIT_ETC,
@@ -412,29 +388,38 @@ def cmd_status(args) -> int:
             run,
         )
 
-        # Probe both unit install locations; labeled ACTIVE/FAILED only.
-        out, _, _ = run(
-            c,
-            f"test -d {REMOTE_HOME} && echo HOME_YES || echo HOME_NO; "
-            f"test -f {UNIT_ETC} && echo UNIT_ETC_YES || echo UNIT_ETC_NO; "
-            f"test -f {UNIT_USR} && echo UNIT_USR_YES || echo UNIT_USR_NO; "
-            f'printf "ACTIVE:%s\\n" "$(systemctl is-active {UNIT_NAME} 2>/dev/null || echo inactive)"; '
-            f'printf "FAILED:%s\\n" "$(systemctl is-failed {UNIT_NAME} 2>/dev/null || echo unknown)"',
-            timeout=20,
-        )
-        facts = parse_pointer_probe_output(out)
-        pointer = classify_pointer_status(
-            home_present=facts["home_present"],
-            unit_file_present=facts["unit_file_present"],
-            is_active=facts["is_active"],
-            is_failed=facts["is_failed"],
-        )
-        if pointer.state not in ("not_installed",):
-            pointer.detail = (
-                pointer.detail + f" | raw={';'.join(facts['raw_lines'])[:200]}"
+        with _pointer_session(args) as c:
+            # Probe both unit install locations; labeled ACTIVE/FAILED only.
+            out, err, code = run(
+                c,
+                f"test -d {REMOTE_HOME} && echo HOME_YES || echo HOME_NO; "
+                f"test -f {UNIT_ETC} && echo UNIT_ETC_YES || echo UNIT_ETC_NO; "
+                f"test -f {UNIT_USR} && echo UNIT_USR_YES || echo UNIT_USR_NO; "
+                f'printf "ACTIVE:%s\\n" "$(systemctl is-active {UNIT_NAME} 2>/dev/null || echo inactive)"; '
+                f'printf "FAILED:%s\\n" "$(systemctl is-failed {UNIT_NAME} 2>/dev/null || echo unknown)"',
+                timeout=20,
             )
-        # Settings → Help health (XOVI tether). Hint repair path when broken.
-        settings_lines = _probe_settings_ui(run, c)
+            if code != 0:
+                detail = (err or out or "no diagnostic output").strip()
+                raise RuntimeError(f"pointer probe failed ({code}): {detail[:240]}")
+            facts = parse_pointer_probe_output(out)
+            if not facts["complete"]:
+                raise RuntimeError(
+                    "pointer probe returned incomplete output: "
+                    + ";".join(facts["raw_lines"])[:240]
+                )
+            pointer = classify_pointer_status(
+                home_present=facts["home_present"],
+                unit_file_present=facts["unit_file_present"],
+                is_active=facts["is_active"],
+                is_failed=facts["is_failed"],
+            )
+            if pointer.state not in ("not_installed",):
+                pointer.detail = (
+                    pointer.detail + f" | raw={';'.join(facts['raw_lines'])[:200]}"
+                )
+            # Settings → Help health (XOVI tether). Hint repair path when broken.
+            settings_lines = _probe_settings_ui(run, c)
     except Exception as e:
         pointer = ComponentStatus(
             state="unknown",
@@ -443,12 +428,6 @@ def cmd_status(args) -> int:
             label="pointer",
         )
         settings_lines = [f"error: {e}"]
-    finally:
-        if c is not None:
-            try:
-                c.close()
-            except Exception:
-                pass
 
     sys.stdout.write(
         format_status_report(keyboard_lines, pointer, keyboard=keyboard)
@@ -491,7 +470,7 @@ def _probe_settings_ui(run, c) -> list[str]:
     staged = flags.get("QMD_STAGED") == "yes"
     if active and broker:
         lines.append("state: ok")
-        lines.append("detail: Settings → Help should show PaperHid (open Help once if unsure)")
+        lines.append("detail: Settings -> Help should show PaperHid (open Help once if unsure)")
     elif staged or active:
         lines.append("state: needs_enable")
         lines.append(
@@ -520,35 +499,25 @@ def cmd_settings_ui(args) -> int:
     a freeze / stock reboot: install the PaperHid Help panel and re-tether XOVI.
     ``repair-ui`` is kept as a compatibility alias.
     """
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    print("=== Settings → Help UI ===")
+    print("=== Settings -> Help UI ===")
     print(
         "Installs or refreshes the PaperHid Help panel and starts XOVI "
         "(first-time setup, or after freeze / stock reboot / empty Help)."
     )
-    c = None
     try:
-        c, _, _ = open_pointer_paramiko(host=host, password=password)
-        _maybe_save_password(args, host, password)
         from paperpointer.cli import cmd_enable_settings_ui
 
-        code = cmd_enable_settings_ui(c)
+        with _pointer_session(args) as c:
+            code = cmd_enable_settings_ui(c)
         if code == 0:
             print(
-                "OK: open Settings → Help on the tablet (fresh open).\n"
+                "OK: open Settings -> Help on the tablet (fresh open).\n"
                 "Optional: python cli.py pointer settings-ui-check"
             )
         return code
     except Exception as e:
         print(f"settings-ui error: {e}", file=sys.stderr)
         return 1
-    finally:
-        if c is not None:
-            try:
-                c.close()
-            except Exception:
-                pass
 
 
 # Backward-compatible name (docs / muscle memory).
@@ -557,53 +526,33 @@ cmd_repair_ui = cmd_settings_ui
 
 def cmd_detect(args) -> int:
     """Merged detect: keyboard device detect + pointer detect dump."""
-    host = _host_from_args(args)
-    password = _password_from_args(args)
     print("=== keyboard / device ===")
-    kb_code = 0
     try:
-        # Nested CLI connects; save after success only
-        kb_code = kb.cmd_detect(_kb_args_view(args, save_password=False)) or 0
-        if kb_code == 0:
-            _maybe_save_password(args, host, password)
+        kb_code = _run_keyboard_command(args, kb.cmd_detect)
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         kb_code = 1
     print("=== pointer / inputs ===")
-    c = None
-    ptr_code = 0
     try:
-        c, _, _ = open_pointer_paramiko(host=host, password=password)
-        _maybe_save_password(args, host, password)
         from paperpointer.cli import cmd_detect as ptr_detect
 
-        ptr_code = ptr_detect(c)
+        with _pointer_session(args) as c:
+            ptr_code = ptr_detect(c)
     except Exception as e:
         print(f"pointer detect error: {e}", file=sys.stderr)
         ptr_code = 1
-    finally:
-        if c is not None:
-            c.close()
     return kb_code if kb_code != 0 else ptr_code
 
 
 def cmd_pointer(args) -> int:
     """Dispatch ``pointer <cmd>`` subcommands."""
-    host = _host_from_args(args)
-    password = _password_from_args(args)
-    c = None
-    try:
-        c, _, _ = open_pointer_paramiko(host=host, password=password)
-        _maybe_save_password(args, host, password)
-        from paperpointer.cli import dispatch_pointer
+    from paperpointer.cli import dispatch_pointer
 
-        # Normalize cmd attr for dispatch_pointer
-        if not getattr(args, "cmd", None):
-            args.cmd = getattr(args, "pointer_cmd", None)
+    # Normalize cmd attr for dispatch_pointer
+    if not getattr(args, "cmd", None):
+        args.cmd = getattr(args, "pointer_cmd", None)
+    with _pointer_session(args) as c:
         return dispatch_pointer(args, c)
-    finally:
-        if c is not None:
-            c.close()
 
 
 # --- Parser ------------------------------------------------------------------
@@ -752,7 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
         "settings-ui",
         parents=[child_shared],
         help=(
-            "Install or refresh Settings → Help (first-time after XOVI, "
+            "Install or refresh Settings -> Help (first-time after XOVI, "
             "or re-enable after freeze/empty Help)"
         ),
     )
@@ -786,22 +735,24 @@ def main(argv=None) -> int:
     if getattr(args, "host", None) and not getattr(args, "ip", None):
         args.ip = args.host
 
+    keyboard_handlers = {
+        "ssh": kb.cmd_ssh,
+        "scan": kb.cmd_scan,
+        "pair": kb.cmd_pair,
+        "save-mac": kb.cmd_save_mac,
+        "unpair": kb.cmd_unpair,
+        "refuse-layout": kb.cmd_refuse_layout,
+        "diagnose": kb.cmd_diagnose,
+    }
     handlers = {
         "detect": cmd_detect,
         "status": cmd_status,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
         "bootstrap-python": cmd_bootstrap_python,
-        "ssh": lambda a: kb.cmd_ssh(_kb_args_view(a)),
-        "scan": lambda a: kb.cmd_scan(_kb_args_view(a)),
-        "pair": lambda a: kb.cmd_pair(_kb_args_view(a)),
-        "save-mac": lambda a: kb.cmd_save_mac(_kb_args_view(a)),
-        "unpair": lambda a: kb.cmd_unpair(_kb_args_view(a)),
-        "refuse-layout": lambda a: kb.cmd_refuse_layout(_kb_args_view(a)),
         "set-layout": cmd_set_layout,
         "settings-ui": cmd_settings_ui,
         "repair-ui": cmd_settings_ui,  # alias
-        "diagnose": lambda a: kb.cmd_diagnose(_kb_args_view(a)),
         "pointer": cmd_pointer,
     }
     try:
@@ -809,6 +760,8 @@ def main(argv=None) -> int:
             # Map nested dest
             args.cmd = args.pointer_cmd
             return cmd_pointer(args)
+        if args.command in keyboard_handlers:
+            return _run_keyboard_command(args, keyboard_handlers[args.command])
         return handlers[args.command](args) or 0
     except CliError as e:
         print(f"error: {e}", file=sys.stderr)

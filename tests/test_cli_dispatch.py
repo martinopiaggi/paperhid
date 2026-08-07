@@ -300,6 +300,11 @@ class TestPhase4HostSurface(unittest.TestCase):
         import argparse
         import cli as root_cli
 
+        class Cp1252Stream(io.StringIO):
+            def write(self, text):
+                text.encode("cp1252")
+                return super().write(text)
+
         conn = MagicMock()
         args = argparse.Namespace(
             host="10.11.99.1",
@@ -313,7 +318,8 @@ class TestPhase4HostSurface(unittest.TestCase):
             with patch(
                 "paperpointer.cli.cmd_enable_settings_ui", return_value=0
             ) as en:
-                code = root_cli.cmd_settings_ui(args)
+                with contextlib.redirect_stdout(Cp1252Stream()):
+                    code = root_cli.cmd_settings_ui(args)
         self.assertEqual(code, 0)
         en.assert_called_once_with(conn)
         conn.close.assert_called_once()
@@ -492,7 +498,14 @@ class TestPointerProbeParse(unittest.TestCase):
         self.assertTrue(facts["unit_usr_present"])
         self.assertFalse(facts["unit_etc_present"])
 
-    def _run_cmd_status(self, probe_stdout, kb_state, save_password=False):
+    def _run_cmd_status(
+        self,
+        probe_stdout,
+        kb_state,
+        save_password=False,
+        probe_stderr="",
+        probe_code=0,
+    ):
         import argparse
         import cli as root_cli
 
@@ -511,7 +524,7 @@ class TestPointerProbeParse(unittest.TestCase):
             if "ACTIVE:" in cmd and "UNIT_ETC" in cmd:
                 self.assertIn("FAILED:", cmd)
                 self.assertIn("UNIT_USR", cmd)
-                return probe_stdout, "", 0
+                return probe_stdout, probe_stderr, probe_code
             # Settings / XOVI probe (second run from cmd_status)
             if "QMD_ACTIVE" in cmd or "paperpointer-settings.qmd" in cmd:
                 return (
@@ -618,6 +631,51 @@ class TestPointerProbeParse(unittest.TestCase):
             },
         )
         self.assertEqual(code, 1)
+
+    def test_cmd_status_failed_pointer_probe_exits_nonzero(self):
+        code, _, _ = self._run_cmd_status(
+            "",
+            {
+                "service_present": True,
+                "service_active": True,
+                "service_failed": False,
+                "service_installed": True,
+            },
+            probe_stderr="remote shell failed",
+            probe_code=127,
+        )
+        self.assertEqual(code, 1)
+
+
+class TestDelegatedKeyboardCommands(unittest.TestCase):
+    def test_successful_command_saves_requested_password(self):
+        import cli as root_cli
+
+        with patch.object(root_cli.kb, "cmd_scan", return_value=0) as handler:
+            with patch.object(root_cli, "_maybe_save_password") as save:
+                code = root_cli.main(
+                    ["scan", "--password", "pw", "--save-password"]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertFalse(handler.call_args.args[0].save_password)
+        save.assert_called_once()
+        self.assertEqual(save.call_args.args[1:], ("10.11.99.1", "pw"))
+
+    def test_delegated_cli_error_keeps_its_exit_code(self):
+        import cli as root_cli
+
+        stderr = io.StringIO()
+        with patch.object(
+            root_cli.kb,
+            "cmd_scan",
+            side_effect=root_cli.kb.CliError("no password", code=2),
+        ):
+            with contextlib.redirect_stderr(stderr):
+                code = root_cli.main(["scan", "--password", "pw"])
+
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr.getvalue(), "error: no password\n")
 
 
 class TestRootCliInstallModes(unittest.TestCase):
