@@ -1,3 +1,11 @@
+"""Pointer host operations for PaperHid.
+
+Not a standalone CLI. Invoke via the unified entry::
+
+    python cli.py pointer <command>
+
+Implementation is used by ``host_cli.app`` (session/auth + argparse live there).
+"""
 from __future__ import annotations
 
 import argparse

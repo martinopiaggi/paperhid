@@ -230,10 +230,11 @@ class TestRootPointerDispatchCleanup(unittest.TestCase):
             pointer_cmd="status",
             cmd=None,
         )
-        with patch.object(root_cli, "_password_from_args", return_value="pw"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
-                with patch.object(
-                    root_cli, "open_pointer_paramiko", return_value=(fake, "h", "p")
+        with patch("host_cli.session.password_from_args", return_value="pw"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
+                with patch(
+                    "host_cli.session.open_pointer_paramiko",
+                    return_value=(fake, "h", "p"),
                 ) as conn:
                     with patch(
                         "paperpointer.cli.dispatch_pointer", return_value=42
@@ -257,10 +258,11 @@ class TestRootPointerDispatchCleanup(unittest.TestCase):
             pointer_cmd="status",
             cmd=None,
         )
-        with patch.object(root_cli, "_password_from_args", return_value="pw"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
-                with patch.object(
-                    root_cli, "open_pointer_paramiko", return_value=(fake, "h", "p")
+        with patch("host_cli.session.password_from_args", return_value="pw"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
+                with patch(
+                    "host_cli.session.open_pointer_paramiko",
+                    return_value=(fake, "h", "p"),
                 ):
                     with patch(
                         "paperpointer.cli.dispatch_pointer",
@@ -312,8 +314,9 @@ class TestPhase4HostSurface(unittest.TestCase):
             password="pw",
             save_password=False,
         )
-        with patch.object(
-            root_cli, "open_pointer_paramiko", return_value=(conn, "10.11.99.1", "pw")
+        with patch(
+            "host_cli.session.open_pointer_paramiko",
+            return_value=(conn, "10.11.99.1", "pw"),
         ):
             with patch(
                 "paperpointer.cli.cmd_enable_settings_ui", return_value=0
@@ -346,7 +349,7 @@ class TestPhase4HostSurface(unittest.TestCase):
             password="x",
             save_password=False,
         )
-        with patch.object(root_cli, "open_keyboard_ssh") as open_ssh:
+        with patch("host_cli.session.open_keyboard_ssh") as open_ssh:
             code = root_cli.cmd_set_layout(args)
         self.assertEqual(code, 2)
         open_ssh.assert_not_called()
@@ -535,30 +538,26 @@ class TestPointerProbeParse(unittest.TestCase):
                 )
             self.fail(f"unexpected run() cmd: {cmd[:120]}")
 
-        with patch.object(root_cli, "_password_from_args", return_value="x"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
-                with patch.object(
-                    root_cli,
-                    "open_keyboard_ssh",
+        with patch("host_cli.session.password_from_args", return_value="x"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
+                with patch(
+                    "host_cli.session.open_keyboard_ssh",
                     return_value=(fake_ssh, "h", "p"),
                 ):
-                    with patch.object(
-                        root_cli.device_mod,
-                        "detect",
+                    with patch(
+                        "host_cli.app.device_mod.detect",
                         return_value={
                             "label": "Paper Pro",
                             "model": "paper_pro",
                             "img_version": "3.28.0.164",
                         },
                     ):
-                        with patch.object(
-                            root_cli.bluetooth,
-                            "verify_device_state",
+                        with patch(
+                            "host_cli.app.bluetooth.verify_device_state",
                             return_value=kb_state,
                         ):
-                            with patch.object(
-                                root_cli,
-                                "open_pointer_paramiko",
+                            with patch(
+                                "host_cli.session.open_pointer_paramiko",
                                 return_value=(fake_c, "h", "p"),
                             ):
                                 with patch(
@@ -652,7 +651,7 @@ class TestDelegatedKeyboardCommands(unittest.TestCase):
         import cli as root_cli
 
         with patch.object(root_cli.kb, "cmd_scan", return_value=0) as handler:
-            with patch.object(root_cli, "_maybe_save_password") as save:
+            with patch("host_cli.app.maybe_save_password") as save:
                 code = root_cli.main(
                     ["scan", "--password", "pw", "--save-password"]
                 )
@@ -750,20 +749,19 @@ class TestRootCliInstallModes(unittest.TestCase):
             timeout=15,
             wait=12,
         )
-        with patch.object(root_cli, "_password_from_args", return_value="wrong"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
-                with patch.object(
-                    root_cli,
-                    "open_pointer_paramiko",
+        with patch("host_cli.session.password_from_args", return_value="wrong"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
+                with patch(
+                    "host_cli.session.open_pointer_paramiko",
                     side_effect=RuntimeError("auth failed"),
                 ):
                     with patch.object(root_cli.config, "save") as save:
-                        with patch.object(root_cli, "_maybe_save_password") as maybe:
+                        with patch("host_cli.session.maybe_save_password") as maybe:
                             # Drive real cmd_install path: connect fails before save
                             code = root_cli.cmd_install(args)
         self.assertEqual(code, 1)
         # Connection failed: save helper must not have been called with success path.
-        # cmd_install only calls _maybe_save_password after open succeeds.
+        # cmd_install only calls maybe_save_password after open succeeds.
         maybe.assert_not_called()
         save.assert_not_called()
 
@@ -781,8 +779,8 @@ class TestRootCliInstallModes(unittest.TestCase):
             timeout=15,
             wait=12,
         )
-        with patch.object(root_cli, "_password_from_args", return_value="x"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
+        with patch("host_cli.session.password_from_args", return_value="x"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
                 with patch.object(root_cli.kb, "cmd_install_service", return_value=5):
                     with patch(
                         "paperpointer.cli.cmd_install"
@@ -806,12 +804,11 @@ class TestRootCliInstallModes(unittest.TestCase):
             wait=12,
         )
         fake_c = MagicMock()
-        with patch.object(root_cli, "_password_from_args", return_value="x"):
-            with patch.object(root_cli, "_host_from_args", return_value="10.11.99.1"):
+        with patch("host_cli.session.password_from_args", return_value="x"):
+            with patch("host_cli.session.host_from_args", return_value="10.11.99.1"):
                 with patch.object(root_cli.kb, "cmd_install_service", return_value=0):
-                    with patch.object(
-                        root_cli,
-                        "open_pointer_paramiko",
+                    with patch(
+                        "host_cli.session.open_pointer_paramiko",
                         return_value=(fake_c, "h", "p"),
                     ):
                         with patch(
