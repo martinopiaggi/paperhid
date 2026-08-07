@@ -854,7 +854,6 @@ class TestPointerSshRunTimeout(unittest.TestCase):
         channel = MagicMock()
         channel.status_event.wait.return_value = False
         stdout.channel = channel
-        stdin.channel = channel
         client.exec_command.return_value = (stdin, stdout, stderr)
 
         with self.assertRaises(TimeoutError):
@@ -862,6 +861,8 @@ class TestPointerSshRunTimeout(unittest.TestCase):
 
         channel.close.assert_called()
         stdout.read.assert_not_called()
+        # Must not shutdown stdin early (Dropbear/busybox quirk).
+        stdin.channel.shutdown_write.assert_not_called()
 
     def test_cmd_detect_bounds_bluetoothctl(self):
         import inspect

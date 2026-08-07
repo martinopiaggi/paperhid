@@ -618,6 +618,22 @@ echo OK
         print(f"install failed code={code}", file=sys.stderr)
         return code
     print("installed and started")
+    # Visual cursor is XOVI-tethered and is NOT restored by daemon install alone.
+    # (Reboot / settings-ui / stock paths often leave cursor publisher off.)
+    conf_out, _, _ = run(
+        c,
+        f"grep -E '^cursor=' {REMOTE_HOME}/pointer.conf 2>/dev/null || true; "
+        "test -f /home/root/xovi/exthome/qt-resource-rebuilder/paperpointer-cursor.qmd "
+        "&& echo QMD=yes || echo QMD=no",
+        timeout=10,
+    )
+    conf_blob = conf_out or ""
+    if "cursor=1" in conf_blob or "QMD=yes" in conf_blob:
+        print(
+            "note: on-screen cursor is separate from mouse clicks.\n"
+            "  If the crosshair is missing: python cli.py pointer enable-cursor\n"
+            "  (XOVI; firmware 3.28.0.164; restarts xochitl — save work first)"
+        )
     return 0
 
 

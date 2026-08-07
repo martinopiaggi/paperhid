@@ -45,19 +45,18 @@ def connect(host: str, password: str, user: str = DEFAULT_USER) -> paramiko.SSHC
 def run(c: paramiko.SSHClient, cmd: str, timeout: int = 60) -> tuple[str, str, int]:
     """Run a remote command with a hard deadline.
 
-    Paramiko's channel timeout alone is not enough: if a remote tool never
+    Paramiko's per-recv timeout alone is not enough: if a remote tool never
     exits (classic on Paper Pro: wedged ``bluetoothctl``), ``stdout.read()``
     can block until the user Ctrl-C's. Mirror ``core.ssh_client.SSHClient.exec``
     and wait on the channel status event.
+
+    On timeout we close the channel so the host unblocks. Callers that run
+    long armed tablet scripts (``enable_cursor.sh``) must pass a high enough
+    ``timeout`` — a mid-flight kill can trip those scripts' rollback traps.
     """
-    stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
-    try:
-        stdin.channel.shutdown_write()
-    except Exception:
-        try:
-            stdin.close()
-        except Exception:
-            pass
+    _stdin, stdout, stderr = c.exec_command(cmd, timeout=timeout)
+    # Do not shutdown stdin early: some Dropbear/busybox paths treat that as
+    # EOF for the whole session. Keyboard-side SSHClient also leaves stdin open.
     channel = stdout.channel
     if not channel.status_event.wait(timeout=timeout):
         try:
