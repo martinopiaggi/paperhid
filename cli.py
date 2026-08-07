@@ -72,7 +72,7 @@ def _kb_args_view(args, *, save_password: bool | None = None):
         save_password=save_password,
         timeout=getattr(args, "timeout", 15),
         wait=getattr(args, "wait", 12),
-        scan_timeout=getattr(args, "scan_timeout", 22),
+        scan_timeout=getattr(args, "scan_timeout", 5),
         mac=getattr(args, "mac", None),
         name=getattr(args, "name", "") or "",
         remote_cmd=getattr(args, "remote_cmd", "uname -a"),
@@ -364,7 +364,14 @@ def cmd_status(args) -> int:
         )
         _maybe_save_password(args, host, password)
         info = device_mod.detect(ssh)
-        state = bluetooth.verify_device_state(ssh, config.load())
+        cfg = config.load()
+        state = bluetooth.verify_device_state(ssh, cfg)
+        # Drop host-side keyboard_mac if tablet rejected it as a pointer
+        # (multi-device: mouse must not stick in keyboard config).
+        if not state.get("keyboard_mac") and cfg.get("keyboard_mac"):
+            cfg["keyboard_mac"] = ""
+            cfg["keyboard_name"] = ""
+            config.save(cfg)
         present = bool(state.get("service_present") or state.get("service_active"))
         keyboard = classify_keyboard_status(
             service_present=present,
@@ -486,33 +493,39 @@ def _probe_settings_ui(run, c) -> list[str]:
         lines.append("state: ok")
         lines.append("detail: Settings → Help should show PaperHid (open Help once if unsure)")
     elif staged or active:
-        lines.append("state: needs_repair")
+        lines.append("state: needs_enable")
         lines.append(
             "detail: PaperHid Help files present but XOVI not tethered "
             "(Help looks stock / empty)"
         )
-        lines.append("fix: python cli.py repair-ui")
+        lines.append("fix: python cli.py settings-ui")
     elif flags.get("XOVI_START") == "yes":
         lines.append("state: not_installed")
         lines.append("detail: XOVI present; Settings panel not installed yet")
-        lines.append("fix: python cli.py repair-ui")
+        lines.append("fix: python cli.py settings-ui")
     else:
         lines.append("state: not_installed")
         lines.append(
             "detail: optional Settings UI not installed "
             "(firmware 3.28.0.164 + XOVI required)"
         )
+        lines.append("fix: install XOVI, then python cli.py settings-ui")
     return lines
 
 
-def cmd_repair_ui(args) -> int:
-    """Reinstall Settings → Help and re-tether XOVI (average-user recovery)."""
+def cmd_settings_ui(args) -> int:
+    """Install or refresh Settings → Help (first-time setup and re-enable).
+
+    Same operation whether this is the first enable after XOVI or recovery after
+    a freeze / stock reboot: install the PaperHid Help panel and re-tether XOVI.
+    ``repair-ui`` is kept as a compatibility alias.
+    """
     host = _host_from_args(args)
     password = _password_from_args(args)
-    print("=== repair Settings → Help UI ===")
+    print("=== Settings → Help UI ===")
     print(
-        "Reinstalls the PaperHid Help panel and starts XOVI "
-        "(safe after freeze, stock reboot, or empty Help)."
+        "Installs or refreshes the PaperHid Help panel and starts XOVI "
+        "(first-time setup, or after freeze / stock reboot / empty Help)."
     )
     c = None
     try:
@@ -528,7 +541,7 @@ def cmd_repair_ui(args) -> int:
             )
         return code
     except Exception as e:
-        print(f"repair-ui error: {e}", file=sys.stderr)
+        print(f"settings-ui error: {e}", file=sys.stderr)
         return 1
     finally:
         if c is not None:
@@ -536,6 +549,10 @@ def cmd_repair_ui(args) -> int:
                 c.close()
             except Exception:
                 pass
+
+
+# Backward-compatible name (docs / muscle memory).
+cmd_repair_ui = cmd_settings_ui
 
 
 def cmd_detect(args) -> int:
@@ -700,11 +717,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("ssh", parents=[child_shared])
     sp.add_argument("remote_cmd", nargs="?", default="uname -a")
     sp = sub.add_parser("scan", parents=[child_shared])
-    sp.add_argument("--scan-timeout", type=int, default=22)
+    sp.add_argument(
+        "--scan-timeout",
+        type=int,
+        default=5,
+        help="BLE discovery seconds (default 5; early-exits when --name matches)",
+    )
     sp = sub.add_parser("pair", parents=[child_shared])
     sp.add_argument("--mac", default=None)
     sp.add_argument("--name", default="")
-    sp.add_argument("--scan-timeout", type=int, default=22)
+    sp.add_argument(
+        "--scan-timeout",
+        type=int,
+        default=5,
+        help="BLE discovery seconds when resolving --name (default 5; early-exit on match)",
+    )
     sp = sub.add_parser("save-mac", parents=[child_shared])
     sp.add_argument("--mac", required=True)
     sp.add_argument("--name", default="")
@@ -722,9 +749,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Layout key (it, us, de, …) or display name (Italian, …)",
     )
     sub.add_parser(
+        "settings-ui",
+        parents=[child_shared],
+        help=(
+            "Install or refresh Settings → Help (first-time after XOVI, "
+            "or re-enable after freeze/empty Help)"
+        ),
+    )
+    sub.add_parser(
         "repair-ui",
         parents=[child_shared],
-        help="Reinstall Settings → Help panel and re-tether XOVI (after freeze/empty Help)",
+        help="Alias for settings-ui (same command)",
     )
     sp = sub.add_parser("diagnose", parents=[child_shared])
     sp.add_argument("--probe-scan", action="store_true")
@@ -764,7 +799,8 @@ def main(argv=None) -> int:
         "unpair": lambda a: kb.cmd_unpair(_kb_args_view(a)),
         "refuse-layout": lambda a: kb.cmd_refuse_layout(_kb_args_view(a)),
         "set-layout": cmd_set_layout,
-        "repair-ui": cmd_repair_ui,
+        "settings-ui": cmd_settings_ui,
+        "repair-ui": cmd_settings_ui,  # alias
         "diagnose": lambda a: kb.cmd_diagnose(_kb_args_view(a)),
         "pointer": cmd_pointer,
     }

@@ -122,6 +122,10 @@ def cmd_status(args):
     def run(ssh, cfg, ip):
         info = device_mod.detect(ssh)
         state = bluetooth.verify_device_state(ssh, cfg)
+        if not state.get("keyboard_mac") and cfg.get("keyboard_mac"):
+            cfg["keyboard_mac"] = ""
+            cfg["keyboard_name"] = ""
+            config.save(cfg)
         print(f"device: {info.get('label')} ({info.get('model')})")
         print(f"img_version: {info.get('img_version')}")
         for k, v in state.items():
@@ -144,9 +148,16 @@ def cmd_scan(args):
 def cmd_pair(args):
     def run(ssh, cfg, ip):
         mac, name = args.mac, args.name or ""
+        # After a successful discovery scan we already know the device — skip
+        # the second full scan inside pair_and_connect (saves ~10–20s).
+        discovered = False
         if not mac:
-            print("scanning for keyboard...")
-            devices = bluetooth.scan_devices(ssh, timeout=args.scan_timeout)
+            print("scanning for device (keyboard or mouse)...")
+            devices = bluetooth.scan_devices(
+                ssh,
+                timeout=args.scan_timeout,
+                until_name=name or None,
+            )
             print(f"found: {len(devices)}")
             for d in devices:
                 print(f"  {d['mac']}\t{d['name']}")
@@ -164,15 +175,107 @@ def cmd_pair(args):
                 print("error: no matching device; pass --mac or --name", file=sys.stderr)
                 return 1
             mac, name = match["mac"], match["name"]
+            discovered = True
             print(f"selected: {name} ({mac})")
+        elif bluetooth.device_known(ssh, mac):
+            discovered = True
         print(f"pairing {mac}...")
-        bluetooth.pair_and_connect(ssh, mac, old_mac=cfg.get("keyboard_mac") or None)
+        # Multi-device: never unpair other HID devices when bonding a new one.
+        # Keyboard replacement (old keyboard → new keyboard) is handled below.
+        # pre_scan=False when we just found the device (or it is already known).
+        bluetooth.pair_and_connect(
+            ssh,
+            mac,
+            old_mac=None,
+            replace_previous=False,
+            pre_scan=not discovered,
+        )
+        info = bluetooth.get_device_info(ssh, mac)
+        if not name:
+            name = bluetooth.get_device_name(ssh, mac) or mac
+        role = bluetooth.classify_device_role(info, name)
+        print(f"role: {role}")
+
+        if role == "pointer":
+            # Mouse/touchpad: leave keyboard MAC alone; clear if it wrongly
+            # pointed at this pointer (legacy bug).
+            saved = ""
+            try:
+                out, _, code = ssh.exec(
+                    f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
+                    timeout=5,
+                )
+                if code == 0:
+                    saved = (out or "").strip()
+            except Exception:
+                pass
+            saved = saved or (cfg.get("keyboard_mac") or "")
+            try:
+                if saved and bluetooth.normalize_mac(saved) == bluetooth.normalize_mac(
+                    mac
+                ):
+                    ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
+                    cfg["keyboard_mac"] = ""
+                    cfg["keyboard_name"] = ""
+                    config.save(cfg)
+                    print("cleared keyboard MAC (was this pointer)")
+            except ValueError:
+                pass
+            print(f"paired_ok: {mac} {name} (pointer — keyboard unchanged)")
+            print(
+                "note: keyboard + mouse can stay paired together; "
+                "re-pair keyboard only if it was removed by an older client"
+            )
+            return 0
+
+        if role == "unknown":
+            print(
+                "warning: could not classify as keyboard or pointer; "
+                "paired but not saved as keyboard MAC. "
+                "If this is a keyboard: python cli.py save-mac --mac " + mac,
+                file=sys.stderr,
+            )
+            print(f"paired_ok: {mac} {name} (unknown role)")
+            return 0
+
+        # role == keyboard: update reconnect MAC; replace previous keyboard only.
+        old_kb = ""
+        try:
+            out, _, code = ssh.exec(
+                f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
+                timeout=5,
+            )
+            if code == 0:
+                old_kb = (out or "").strip()
+        except Exception:
+            pass
+        old_kb = old_kb or (cfg.get("keyboard_mac") or "")
+        try:
+            if old_kb:
+                old_kb = bluetooth.normalize_mac(old_kb)
+                if old_kb != bluetooth.normalize_mac(mac):
+                    old_info = bluetooth.get_device_info(ssh, old_kb)
+                    old_role = bluetooth.classify_device_role(old_info)
+                    if old_role == "pointer":
+                        print(
+                            f"note: previous keyboard MAC {old_kb} is a pointer; "
+                            "leaving it paired"
+                        )
+                    elif old_role == "keyboard":
+                        print(f"replacing previous keyboard {old_kb}")
+                        try:
+                            bluetooth.remove(ssh, old_kb)
+                        except Exception as e:
+                            print(f"warning: could not remove old keyboard: {e}")
+        except ValueError:
+            old_kb = ""
+
         service_installer.save_keyboard_mac(ssh, mac)
         cfg["keyboard_mac"] = mac
         cfg["keyboard_name"] = name or mac
         cfg["service_installed"] = True
         config.save(cfg)
-        print(f"paired_ok: {mac} {name}")
+        print(f"paired_ok: {mac} {name} (keyboard)")
         return 0
     return _with_ssh(args, run)
 
@@ -195,14 +298,54 @@ def cmd_save_mac(args):
 def cmd_unpair(args):
     def run(ssh, cfg, ip):
         mac = args.mac or cfg.get("keyboard_mac") or ""
-        if mac:
-            bluetooth.remove(ssh, mac)
-            print(f"removed {mac}")
-        ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
-        cfg["keyboard_mac"] = ""
-        cfg["keyboard_name"] = ""
-        config.save(cfg)
-        print("keyboard cleared")
+        if not mac:
+            try:
+                out, _, code = ssh.exec(
+                    f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
+                    timeout=5,
+                )
+                if code == 0:
+                    mac = (out or "").strip()
+            except Exception:
+                pass
+        if not mac:
+            print("error: no MAC (pass --mac)", file=sys.stderr)
+            return 2
+        try:
+            mac = bluetooth.normalize_mac(mac)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+
+        bluetooth.remove(ssh, mac)
+        print(f"removed {mac}")
+
+        # Only clear keyboard reconnect file if we unpaired that keyboard.
+        saved = ""
+        try:
+            out, _, code = ssh.exec(
+                f"cat {service_installer.KEYBOARD_MAC_PATH} 2>/dev/null",
+                timeout=5,
+            )
+            if code == 0:
+                saved = (out or "").strip()
+        except Exception:
+            pass
+        saved = saved or (cfg.get("keyboard_mac") or "")
+        clear_kb = False
+        try:
+            if saved and bluetooth.normalize_mac(saved) == mac:
+                clear_kb = True
+        except ValueError:
+            clear_kb = not args.mac  # legacy: bare unpair with bad saved value
+        if clear_kb:
+            ssh.exec(f"rm -f {service_installer.KEYBOARD_MAC_PATH}", timeout=5)
+            cfg["keyboard_mac"] = ""
+            cfg["keyboard_name"] = ""
+            config.save(cfg)
+            print("keyboard MAC cleared")
+        else:
+            print("keyboard MAC left unchanged (other device removed)")
         return 0
     return _with_ssh(args, run)
 

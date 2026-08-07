@@ -111,9 +111,9 @@ def _runtime_pm_on(t: Transport):
 def disable_nxp_autosleep(t: Transport):
     out, err, _ = t.run(
         "(hcitool cmd 0x3f 0x23 0x03 0x00 0x00) >/tmp/pw-nxp-ps.out 2>&1 & "
-        "CP=$!; sleep 3; kill $CP 2>/dev/null; wait $CP 2>/dev/null; "
+        "CP=$!; sleep 1.5; kill $CP 2>/dev/null; wait $CP 2>/dev/null; "
         "cat /tmp/pw-nxp-ps.out 2>/dev/null || true",
-        timeout=12,
+        timeout=8,
     )
     text = (out or "") + (err or "")
     flat = text.replace("\n", " ")
@@ -188,7 +188,7 @@ def ensure_adapter_ready(t: Transport, timeout=30, gate_wifi=False):
                 "systemctl start bluetooth 2>/dev/null; true",
                 timeout=15,
             )
-            time.sleep(2)
+            time.sleep(1)
             continue
         if any("Powered:" in ln and "yes" in ln.lower() for ln in last.splitlines()):
             t.run("bluetoothctl pairable on >/dev/null 2>&1 || true", timeout=8)
@@ -200,7 +200,7 @@ def ensure_adapter_ready(t: Transport, timeout=30, gate_wifi=False):
                 ps_done = True
             return True
         t.run("bluetoothctl power on >/dev/null 2>&1 || true", timeout=8)
-        time.sleep(2)
+        time.sleep(1)
 
     raise RuntimeError(
         f"Bluetooth adapter not ready.\n\n{_NXP_HINT}\n\nLast: {(last or '')[:240]}"
@@ -277,6 +277,25 @@ def verify_device_state(t: Transport, cfg):
     except Exception:
         pass
     mac = mac or (cfg or {}).get("keyboard_mac", "")
+    # If the saved "keyboard" MAC is actually a mouse/touchpad, ignore it so
+    # status does not claim the keyboard is connected when only a pointer is.
+    if mac:
+        try:
+            mac = normalize_mac(mac)
+        except ValueError:
+            mac = ""
+        if mac:
+            info = get_device_info(t, mac)
+            if classify_device_role(info, get_device_name(t, mac) if not info else "") == "pointer":
+                log.warning(
+                    "saved keyboard MAC %s is a pointer — not treating as keyboard",
+                    mac,
+                )
+                try:
+                    t.run(f"rm -f {KEYBOARD_MAC_PATH}", timeout=5)
+                except Exception:
+                    pass
+                mac = ""
     if not mac:
         return state
 
@@ -311,22 +330,37 @@ def _clear_discovery(t: Transport):
         "bluetoothctl scan off >/dev/null 2>&1 || true; "
         "busctl call org.bluez /org/bluez/hci0 org.bluez.Adapter1 StopDiscovery "
         "2>/dev/null || true; true",
-        timeout=12,
+        timeout=8,
     )
-    time.sleep(0.5)
+    time.sleep(0.2)
 
 
 def _scan_window(t: Transport, seconds: int):
+    seconds = max(1, int(seconds))
     try:
         out, err, _ = t.run(
             f"bluetoothctl --timeout {seconds} scan on 2>&1 || true",
-            timeout=seconds + 10,
+            timeout=seconds + 8,
         )
         return (out or "") + (err or "")
     except TimeoutError:
         return "scan-timeout"
     finally:
         _clear_discovery(t)
+
+
+def _devices_match(devices, until_mac=None, until_name=None):
+    """True when scan results already include the requested target."""
+    if until_mac:
+        try:
+            want = normalize_mac(until_mac)
+        except ValueError:
+            want = ""
+        if want and any((d.get("mac") or "").upper() == want for d in devices or []):
+            return True
+    if until_name:
+        return find_device_by_name(devices, until_name) is not None
+    return False
 
 
 def _scan_hard_fail(text, before, after):
@@ -361,7 +395,7 @@ def _stuck(t: Transport | None = None, extra=""):
 def probe_radio_scan_health(t: Transport):
     _clear_discovery(t)
     before = _hci_fail_count(t)
-    text = _scan_window(t, 4)
+    text = _scan_window(t, 2)
     after = _hci_fail_count(t)
     if "InProgress" in text and "Failed" in text:
         return False, "BlueZ StartDiscovery InProgress/desync after HCI scan failure"
@@ -372,35 +406,73 @@ def probe_radio_scan_health(t: Transport):
     return True, "scan command accepted"
 
 
-def scan_devices(t: Transport, timeout=15, gate_wifi=True):
-    log.info("scan_devices timeout=%ss", timeout)
+def scan_devices(
+    t: Transport,
+    timeout=5,
+    gate_wifi=True,
+    until_mac=None,
+    until_name=None,
+):
+    """Scan for BLE devices.
+
+    *timeout* is the discovery budget in seconds (default 5). When
+    *until_mac* / *until_name* is set, return as soon as that target appears
+    instead of always waiting out the full window.
+    """
+    log.info(
+        "scan_devices timeout=%ss until_mac=%s until_name=%s",
+        timeout,
+        until_mac or "-",
+        until_name or "-",
+    )
     gated = False
     try:
-        ensure_adapter_ready(t, timeout=min(18, max(10, timeout)), gate_wifi=False)
+        ensure_adapter_ready(t, timeout=min(12, max(8, int(timeout))), gate_wifi=False)
         if gate_wifi:
             _wifi_gate(t, True)
             gated = True
-            time.sleep(0.4)
+            time.sleep(0.15)
 
         _clear_discovery(t)
         _runtime_pm_on(t)
         before = _hci_fail_count(t)
 
-        probe = _scan_window(t, 3)
+        probe_s = 2 if (until_mac or until_name) else min(3, max(2, int(timeout) // 4))
+        probe = _scan_window(t, probe_s)
         after_probe = _hci_fail_count(t)
         if _scan_hard_fail(probe, before, after_probe):
-            cached = _parse_device_lines(t.run("bluetoothctl devices 2>&1", timeout=8)[0])
+            cached = _parse_device_lines(t.run("bluetoothctl devices 2>&1", timeout=6)[0])
             if cached:
                 log.info("returning %s cached device(s)", len(cached))
                 return cached
             raise _scan_broken(probe, before, after_probe)
 
-        remaining = max(5, int(timeout) - 3)
-        scan_out = _scan_window(t, remaining)
-        out, _, _ = t.run("bluetoothctl devices 2>&1", timeout=10)
+        out, _, _ = t.run("bluetoothctl devices 2>&1", timeout=6)
         devices = _parse_device_lines(out)
-        after = _hci_fail_count(t)
+        if _devices_match(devices, until_mac, until_name):
+            log.info("scan early-exit: target found after probe (%s device(s))", len(devices))
+            return devices
 
+        remaining = max(0, int(timeout) - probe_s)
+        scan_out = ""
+        # Chunked discovery so name/mac targets can finish early.
+        while remaining > 0:
+            chunk = min(3, remaining) if (until_mac or until_name) else remaining
+            scan_out = _scan_window(t, chunk)
+            remaining -= chunk
+            out, _, _ = t.run("bluetoothctl devices 2>&1", timeout=6)
+            devices = _parse_device_lines(out)
+            if _devices_match(devices, until_mac, until_name):
+                log.info(
+                    "scan early-exit: target found with %ss left (%s device(s))",
+                    remaining,
+                    len(devices),
+                )
+                return devices
+            if not (until_mac or until_name):
+                break
+
+        after = _hci_fail_count(t)
         if not devices and (
             after > before
             or "Failed to start discovery" in scan_out
@@ -463,6 +535,83 @@ def get_device_name(t: Transport, mac):
     return ""
 
 
+def get_device_info(t: Transport, mac) -> str:
+    """Return ``bluetoothctl info`` text for *mac* (empty if unavailable)."""
+    mac = normalize_mac(mac)
+    try:
+        out, _, _ = t.run(f"bluetoothctl info {mac} 2>&1", timeout=10)
+        return out or ""
+    except Exception:
+        return ""
+
+
+def classify_device_role(info_text: str = "", name: str = "") -> str:
+    """Classify a BlueZ device as ``keyboard``, ``pointer``, or ``unknown``.
+
+    Keyboard and mouse/touchpad are both BLE HID; PaperHid must keep them as
+    separate roles so pairing one never overwrites or unpairs the other.
+    """
+    text = (info_text or "").lower()
+    n = (name or "").strip().lower()
+    if not n:
+        for line in (info_text or "").splitlines():
+            s = line.strip()
+            if s.lower().startswith("name:"):
+                n = s.split(":", 1)[1].strip().lower()
+                break
+            if s.lower().startswith("alias:"):
+                n = s.split(":", 1)[1].strip().lower()
+
+    # Icon / Appearance are authoritative when BlueZ provides them.
+    if re.search(r"icon:\s*input-mouse", text) or re.search(
+        r"icon:\s*input-tablet", text
+    ):
+        return "pointer"
+    if re.search(r"icon:\s*input-keyboard", text):
+        return "keyboard"
+    # BLE GAP Appearance: 0x03C1 keyboard, 0x03C2 mouse, 0x03C9 touchpad
+    if re.search(r"appearance:\s*0x0*3c2\b", text) or re.search(
+        r"appearance:\s*0x0*3c9\b", text
+    ):
+        return "pointer"
+    if re.search(r"appearance:\s*0x0*3c1\b", text):
+        return "keyboard"
+
+    pointer_hints = (
+        "mouse",
+        "trackball",
+        "trackpad",
+        "touchpad",
+        "ergo m575",
+        "m575",
+        "mx master",
+        "m720",
+        "m510",
+        "m705",
+    )
+    keyboard_hints = (
+        "keyboard",
+        "keychron",
+        "split",
+        "clvx",
+        "clev",
+        "folio",
+        "hhkb",
+        "realforce",
+        "keyb",
+        " kbd",
+        "kbd ",
+    )
+    if any(h in n for h in pointer_hints):
+        return "pointer"
+    if any(h in n for h in keyboard_hints) or n.endswith(" kb") or " kb " in f" {n} ":
+        return "keyboard"
+    # Generic "board" is too broad (soundboard, etc.); require keyboard-ish.
+    if "board" in n and any(x in n for x in ("key", "split", "mech")):
+        return "keyboard"
+    return "unknown"
+
+
 def device_known(t: Transport, mac):
     mac = normalize_mac(mac)
     out, _, _ = t.run(f"bluetoothctl info {mac} 2>&1", timeout=10)
@@ -475,20 +624,20 @@ def _strip_ansi(text):
     return re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
 
 
-def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=60):
+def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=30):
     mac = normalize_mac(mac)
-    log.info("pair_interactive %s", mac)
+    log.info("pair_interactive %s (timeout=%ss)", mac, timeout)
     session = t.open_pty("bluetoothctl")
     transcript = []
     try:
-        boot = session.read(2)
+        boot = session.read(0.8)
         if boot:
             transcript.append(boot)
 
         session.write_line("agent on")
-        transcript.append(session.read(1))
+        transcript.append(session.read(0.5))
         session.write_line("default-agent")
-        transcript.append(session.read(1))
+        transcript.append(session.read(0.5))
         session.write_line(f"pair {mac}")
 
         deadline = time.monotonic() + timeout
@@ -497,10 +646,11 @@ def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=60):
         hci_before = _hci_fail_count(t)
 
         while time.monotonic() < deadline:
-            output = session.read(2)
+            # Short polls so "Pairing successful" is noticed quickly.
+            output = session.read(0.6)
             if not output:
                 now = time.monotonic()
-                if now - last_log >= 10:
+                if now - last_log >= 8:
                     log.info("still pairing %s (%ss left)", mac, int(deadline - now))
                     last_log = now
                     try:
@@ -572,32 +722,57 @@ def pair_interactive(t: Transport, mac, passkey_callback=None, timeout=60):
 
 
 def pair_and_connect(
-    t: Transport, mac, old_mac=None, passkey_callback=None, pre_scan=True
+    t: Transport,
+    mac,
+    old_mac=None,
+    passkey_callback=None,
+    pre_scan=True,
+    replace_previous: bool = False,
 ):
+    """Pair, trust, and connect *mac*.
+
+    Multiple HID devices (keyboard + mouse) must coexist. By default this does
+    **not** remove any other paired device. Pass ``replace_previous=True`` with
+    ``old_mac`` only when intentionally replacing a *keyboard* with another
+    keyboard (never when pairing a pointer).
+    """
     mac = normalize_mac(mac)
-    log.info("pair_and_connect %s", mac)
-    if old_mac:
+    log.info("pair_and_connect %s pre_scan=%s", mac, pre_scan)
+    if replace_previous and old_mac:
         old_norm = normalize_mac(old_mac)
         if old_norm != mac:
-            remove(t, old_norm)
+            # Never unpair a pointer while "replacing" a keyboard MAC that was
+            # wrongly saved as the mouse (common pre-fix state).
+            old_info = get_device_info(t, old_norm)
+            if classify_device_role(old_info) == "pointer":
+                log.warning(
+                    "skip remove %s — classified as pointer (multi-device)",
+                    old_norm,
+                )
+            else:
+                log.info("replace_previous: remove %s", old_norm)
+                remove(t, old_norm)
 
-    ensure_adapter_ready(t, timeout=25, gate_wifi=False)
+    ensure_adapter_ready(t, timeout=12, gate_wifi=False)
+    known = device_known(t, mac)
 
-    try:
-        ok, detail = probe_radio_scan_health(t)
-    except Exception as e:
-        ok, detail = True, f"probe skipped: {e}"
-    if not ok:
-        if not device_known(t, mac):
+    # Radio probe costs ~2s; only needed when we still have to discover the device.
+    if not known and pre_scan:
+        try:
+            ok, detail = probe_radio_scan_health(t)
+        except Exception as e:
+            ok, detail = True, f"probe skipped: {e}"
+        if not ok:
             raise RuntimeError(
                 f"Paper Pro Bluetooth radio unhealthy — pairing blocked.\n\n"
                 f"Probe: {detail}\n\n{_stuck(t)}"
             )
-        log.warning("radio unhealthy but %s known — trying pair", mac)
 
-    if pre_scan and not device_known(t, mac):
+    if pre_scan and not known:
         try:
-            devices = scan_devices(t, timeout=14, gate_wifi=True)
+            devices = scan_devices(
+                t, timeout=5, gate_wifi=True, until_mac=mac
+            )
         except RuntimeError:
             if not device_known(t, mac):
                 raise
@@ -605,17 +780,17 @@ def pair_and_connect(
         if not device_known(t, mac):
             names = ", ".join(f"{d['name']} ({d['mac']})" for d in devices[:8]) or "(none)"
             raise RuntimeError(
-                f"Keyboard {mac} not discovered. Seen: {names}.\n"
+                f"Device {mac} not discovered. Seen: {names}.\n"
                 f"Pairing mode + disconnect from Windows, then retry.\n\n{_stuck(t)}"
             )
 
-    pair_interactive(t, mac, passkey_callback=passkey_callback, timeout=45)
+    pair_interactive(t, mac, passkey_callback=passkey_callback, timeout=30)
     trust(t, mac)
     try:
         connect(t, mac)
     except RuntimeError as e:
         log.warning("connect failed (%s) — retry", e)
-        time.sleep(2)
+        time.sleep(1)
         connect(t, mac)
     if not get_connection_status(t, mac):
         raise RuntimeError(f"Paired but not connected.\n\n{_stuck(t)}")
@@ -644,12 +819,22 @@ def read_device_keyboard(t: Transport):
         paired = None
 
     if saved_mac:
-        if paired is None:
-            return saved_mac, ""
-        for mac, name in paired:
-            if mac.lower() == saved_mac.lower():
-                return saved_mac, name
-        t.run(f"rm -f {KEYBOARD_MAC_PATH}", timeout=5)
+        try:
+            saved_mac = normalize_mac(saved_mac)
+        except ValueError:
+            saved_mac = ""
+        if saved_mac:
+            info = get_device_info(t, saved_mac)
+            if classify_device_role(info) == "pointer":
+                t.run(f"rm -f {KEYBOARD_MAC_PATH}", timeout=5)
+                saved_mac = ""
+        if saved_mac:
+            if paired is None:
+                return saved_mac, ""
+            for mac, name in paired:
+                if mac.lower() == saved_mac.lower():
+                    return saved_mac, name
+            t.run(f"rm -f {KEYBOARD_MAC_PATH}", timeout=5)
 
     try:
         out, _, code = t.run("bluetoothctl devices Connected", timeout=5)
@@ -663,8 +848,9 @@ def read_device_keyboard(t: Transport):
                     mac = normalize_mac(mac)
                 except ValueError:
                     continue
-                info, _, _ = t.run(f"bluetoothctl info {mac}", timeout=5)
-                if "input-keyboard" in info or "00001812" in info.lower():
+                info = get_device_info(t, mac)
+                # Only auto-pick true keyboards — never mice (also UUID 00001812).
+                if classify_device_role(info, name) == "keyboard":
                     t.write_text(KEYBOARD_MAC_PATH, mac + "\n")
                     return mac, name
     except Exception:
@@ -673,7 +859,7 @@ def read_device_keyboard(t: Transport):
 
 
 def reconnect_now(t: Transport, mac=None):
-    ensure_adapter_ready(t, timeout=25, gate_wifi=False)
+    ensure_adapter_ready(t, timeout=12, gate_wifi=False)
     if not mac:
         try:
             out, _, code = t.run(f"cat {KEYBOARD_MAC_PATH} 2>/dev/null", timeout=5)
@@ -686,8 +872,8 @@ def reconnect_now(t: Transport, mac=None):
     if get_connection_status(t, mac):
         return {"mac": mac, "connected": True}
     t.run(
-        "(echo scan on; sleep 4; echo scan off) | bluetoothctl >/dev/null 2>&1",
-        timeout=12,
+        "(echo scan on; sleep 2; echo scan off) | bluetoothctl >/dev/null 2>&1",
+        timeout=8,
     )
     try:
         connect(t, mac)

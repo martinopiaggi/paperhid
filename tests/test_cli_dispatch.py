@@ -290,12 +290,13 @@ class TestPhase4HostSurface(unittest.TestCase):
         actions = [a for a in p._subparsers._group_actions if a.dest == "command"]
         choices = set(actions[0].choices.keys())
         self.assertIn("set-layout", choices)
-        self.assertIn("repair-ui", choices)
+        self.assertIn("settings-ui", choices)
+        self.assertIn("repair-ui", choices)  # alias
         self.assertNotIn("install-native-app", choices)
         self.assertNotIn("uninstall-native-app", choices)
         self.assertNotIn("refuse-native", choices)
 
-    def test_repair_ui_calls_enable_settings(self):
+    def test_settings_ui_calls_enable_settings(self):
         import argparse
         import cli as root_cli
 
@@ -312,10 +313,12 @@ class TestPhase4HostSurface(unittest.TestCase):
             with patch(
                 "paperpointer.cli.cmd_enable_settings_ui", return_value=0
             ) as en:
-                code = root_cli.cmd_repair_ui(args)
+                code = root_cli.cmd_settings_ui(args)
         self.assertEqual(code, 0)
         en.assert_called_once_with(conn)
         conn.close.assert_called_once()
+        # Alias still points at the same handler
+        self.assertIs(root_cli.cmd_repair_ui, root_cli.cmd_settings_ui)
 
     def test_set_layout_resolves_display_and_key(self):
         import cli as root_cli

@@ -42,11 +42,12 @@ export PAPERHID_PASSWORD='your-root-password'
 python cli.py detect
 python cli.py install --all --save-password
 python cli.py scan
-python cli.py pair --name YourKeyboardOrMouse
+python cli.py pair --name YourKeyboard
+python cli.py pair --name YourMouse
 python cli.py status
 ```
 
-Install the tablet services once, pair your device, then unplug. The keyboard and mouse reconnect from the tablet itself.
+Install the tablet services once, pair your devices, then unplug. **Keyboard and mouse can stay paired together** — pairing a mouse no longer removes or overwrites the keyboard (and vice versa). The keyboard reconnect service only tracks the keyboard MAC; the pointer daemon uses any connected mouse/touchpad HID.
 
 - **`--all`**: keyboard BT service, then mouse daemon.
 - Missing tablet Python: install **auto-bootstraps Entware + python3** (tablet internet, a few minutes, ~80 MB free on `/home`).
@@ -61,7 +62,7 @@ python cli.py status
 python cli.py scan
 python cli.py pair --name YourDevice
 python cli.py set-layout --layout it          # us, us_intl, uk, de, fr, it, es, …
-python cli.py repair-ui                       # Settings → Help (3.28.0.164 + XOVI)
+python cli.py settings-ui                     # Settings → Help (first-time or re-enable; 3.28.0.164 + XOVI)
 python cli.py pointer enable-cursor           # optional visual cursor
 python cli.py pointer test-tap
 python cli.py uninstall --all
@@ -70,7 +71,7 @@ python cli.py uninstall --all
 | Task | How |
 |------|-----|
 | Pair another keyboard / mouse | Host: `scan` then `pair` |
-| Status, BT restart, reconnect | Tablet: **Settings → Help** (after `enable-settings-ui`) |
+| Status, BT restart, reconnect | Tablet: **Settings → Help** (after `settings-ui`) |
 | Layout (US, **US Intl**, UK, DE, FR, IT, ES, …) | **Settings → Help**, or host `set-layout` |
 | US International accents (`'` then `e` → é) | **US Intl**, or `set-layout --layout us_intl` |
 | Cursor overlay | `pointer enable-cursor` / `stock-ui` — [docs/cursor.md](docs/cursor.md) |
@@ -102,7 +103,7 @@ Stock XOVI leaves some extensions under `inactive-extensions/`. PaperHid needs t
 - `xovi-message-broker.so`
 - `qt-command-executor.so`
 
-`python cli.py repair-ui` / `enable-cursor` will activate the last two if they are only under `inactive-extensions/`.
+`python cli.py settings-ui` / `enable-cursor` will activate the last two if they are only under `inactive-extensions/`.
 
 #### Install XOVI on Windows (PowerShell)
 
@@ -150,28 +151,30 @@ Or with [Vellum](https://github.com/asivery/rm-xovi-extensions#with-vellum): `ve
 From the paperhid repo (with `PAPERHID_PASSWORD` set):
 
 ```powershell
-python cli.py repair-ui                   # Settings → Help (activates broker/executor if needed)
+python cli.py settings-ui                 # Settings → Help (first-time or re-enable; activates broker/executor if needed)
 python cli.py pointer enable-cursor       # optional visual cursor
 ```
+
+`settings-ui` is the normal command both for **first enable** (after XOVI) and for **re-enable** after a freeze, stock reboot, or empty Help. `repair-ui` is the same command (alias).
 
 Common errors:
 
 | Message | Meaning |
 |---------|---------|
 | `XOVI is not installed at /home/root/xovi` | Extract failed or wrong `-C` path (use `/home/root`, not `C:\home\root`) |
-| `xovi-message-broker.so is not active` | Extensions still inactive — run step 4 above, or re-run `repair-ui` with a current paperhid (auto-activates) |
+| `xovi-message-broker.so is not active` | Extensions still inactive — run step 4 above, or re-run `settings-ui` with a current paperhid (auto-activates) |
 
 Settings → Help is independent of the cursor: re-enabling the cursor does not remove the panel.
 
-**Settings recovery:** if Help is empty after a freeze or reboot, connect USB and run:
+**If Help is empty** after a freeze or reboot, connect USB and run:
 
 ```bash
-python cli.py repair-ui
+python cli.py settings-ui
 ```
 
 Then open **Settings → Help** once. Details: [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze).
 
-`python cli.py status` prints a `=== settings_ui ===` section; if `state: needs_repair`, run `repair-ui`.
+`python cli.py status` prints a `=== settings_ui ===` section; if it needs re-enable, run `settings-ui`.
 
 ## Troubleshooting
 
@@ -181,12 +184,12 @@ Then open **Settings → Help** once. Details: [docs/cursor.md](docs/cursor.md#r
 | Host key changed (`REMOTE HOST IDENTIFICATION HAS CHANGED`) | `ssh-keygen -R 10.11.99.1` then reconnect |
 | `scp: … xovi.tar.gz: No such file` | Use the real filename, e.g. `scp xovi-aarch64.tar.gz root@10.11.99.1:/tmp/xovi.tar.gz` |
 | PowerShell `wget …` errors | Use `Invoke-WebRequest -Uri … -OutFile …` (Windows `wget` is not GNU wget) |
-| `repair-ui`: XOVI not installed | Install XOVI first (Windows steps above), then `python cli.py repair-ui` |
-| `repair-ui`: message-broker not active | Activate extensions (step 4 above), or re-run `repair-ui` after updating paperhid |
+| `settings-ui`: XOVI not installed | Install XOVI first (Windows steps above), then `python cli.py settings-ui` |
+| `settings-ui`: message-broker not active | Activate extensions (step 4 above), or re-run `settings-ui` after updating paperhid |
 | Pointer bootstrap failed | Tablet Wi‑Fi; free `/home` space; `python cli.py bootstrap-python` |
 | Mouse not moving | `python cli.py status`; re-pair; wake HID after sleep |
 | Keyboard dead after sleep | Press a key; `status`; re-run `install --keyboard` if the unit is gone |
-| Settings → Help has no PaperHid block | `python cli.py repair-ui` then open Help — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
+| Settings → Help has no PaperHid block | `python cli.py settings-ui` then open Help — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
 | BT keyboard forces landscape | Default off. If you set `osk_suppress=1` in `~/.paperpointer/pointer.conf`, set `0` and restart pointer |
 
 ## Tests
