@@ -824,7 +824,8 @@ def cmd_enable_cursor(c) -> int:
         f"sed -i 's/\\r$//' {REMOTE_HOME}/enable_cursor.sh; "
         f"chmod 755 {REMOTE_HOME}/enable_cursor.sh; "
         f"{REMOTE_HOME}/enable_cursor.sh",
-        timeout=180,
+        # Retries + MainView canary can exceed 3 minutes on a rate-limited tablet.
+        timeout=240,
     )
     _out(out)
     if err.strip():

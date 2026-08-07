@@ -132,6 +132,13 @@ class TestUiActionsShipped(unittest.TestCase):
             if "paperpointer-settings.qmd" in stripped and "rm " in stripped:
                 self.fail(f"enable_cursor must not rm settings QMD: {stripped}")
 
+    def test_enable_cursor_resets_xochitl_start_limit(self):
+        """systemd 'Job for xochitl.service canceled' after rapid restarts."""
+        cursor = (ROOT / "device" / "enable_cursor.sh").read_text(encoding="utf-8")
+        self.assertIn("systemctl reset-failed xochitl.service", cursor)
+        self.assertIn("start_xovi_retry", cursor)
+        self.assertIn("wait_for_stable_xochitl", cursor)
+
     def test_stock_ui_preserves_settings_qmd(self):
         text = CLI.read_text(encoding="utf-8")
         start = text.index("def cmd_stock_ui")

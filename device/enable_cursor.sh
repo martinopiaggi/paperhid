@@ -60,6 +60,75 @@ fail() {
     exit "$code"
 }
 
+xochitl_pid() {
+    set -- $(pidof xochitl 2>/dev/null || true)
+    [ "$#" -gt 0 ] && printf '%s\n' "$1"
+}
+
+xochitl_has_extensions() {
+    pid="$1"
+    [ -n "$pid" ] && [ -p /run/xovi-mb ] &&
+        grep -q 'qt-resource-rebuilder.so' "/proc/$pid/maps" 2>/dev/null &&
+        grep -q 'xovi-message-broker.so' "/proc/$pid/maps" 2>/dev/null &&
+        grep -q 'qt-command-executor.so' "/proc/$pid/maps" 2>/dev/null
+}
+
+# XOVI restarts xochitl; accept a PID that stays mapped for *stable_for* seconds.
+wait_for_stable_xochitl() {
+    stable_for="$1"
+    timeout="$2"
+    candidate=""
+    stable=0
+    elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        pid=$(xochitl_pid)
+        if xochitl_has_extensions "$pid"; then
+            if [ "$pid" = "$candidate" ]; then
+                stable=$((stable + 1))
+            else
+                candidate="$pid"
+                stable=1
+            fi
+            if [ "$stable" -ge "$stable_for" ]; then
+                XO="$candidate"
+                return 0
+            fi
+        else
+            candidate=""
+            stable=0
+        fi
+        elapsed=$((elapsed + 1))
+        sleep 1
+    done
+    return 1
+}
+
+start_xovi() {
+    # Rapid restarts (install / settings-ui / failed enable) trip systemd:
+    # "Job for xochitl.service canceled" / start-limit-hit.
+    systemctl reset-failed xochitl.service 2>/dev/null || true
+    # Drop a stuck start/stop so XOVI's own restart is not cancelled.
+    systemctl stop xochitl.service 2>/dev/null || true
+    sleep 1
+    systemctl reset-failed xochitl.service 2>/dev/null || true
+    "$XOVI/start"
+}
+
+start_xovi_retry() {
+    attempt=1
+    while [ "$attempt" -le 4 ]; do
+        echo "XOVI start attempt $attempt/4..."
+        if start_xovi >/tmp/paperpointer-xovi-start.log 2>&1; then
+            return 0
+        fi
+        cat /tmp/paperpointer-xovi-start.log >&2 2>/dev/null || true
+        systemctl reset-failed xochitl.service 2>/dev/null || true
+        sleep $((attempt * 3))
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 trap 'rollback $?' EXIT
 trap 'rollback 129' HUP
 trap 'rollback 130' INT
@@ -120,22 +189,11 @@ chmod 0644 "$QMD_TMP"
 mv -f "$QMD_TMP" "$QMD_TARGET"
 
 echo "starting tethered XOVI cursor for xochitl $IMAGE_VERSION"
-"$XOVI/start" || fail 20 "XOVI start failed"
+start_xovi_retry ||
+    fail 20 "XOVI start failed (xochitl job canceled / start-limit). Wait 30s and retry: python cli.py pointer enable-cursor"
 
-i=0
-XO=""
-while [ "$i" -lt 20 ]; do
-    XO=$(pidof xochitl 2>/dev/null | awk '{print $1}')
-    if [ -n "$XO" ] && [ -p /run/xovi-mb ] &&
-       grep -q 'qt-resource-rebuilder.so' "/proc/$XO/maps" 2>/dev/null &&
-       grep -q 'xovi-message-broker.so' "/proc/$XO/maps" 2>/dev/null &&
-       grep -q 'qt-command-executor.so' "/proc/$XO/maps" 2>/dev/null; then
-        break
-    fi
-    i=$((i + 1))
-    sleep 1
-done
-[ -n "$XO" ] || fail 21 "xochitl did not start"
+wait_for_stable_xochitl 8 60 ||
+    fail 21 "xochitl did not start with XOVI extensions mapped"
 [ -p /run/xovi-mb ] || fail 22 "XOVI message broker did not start"
 grep -q 'qt-resource-rebuilder.so' "/proc/$XO/maps" 2>/dev/null ||
     fail 23 "Qt resource rebuilder is not mapped"
