@@ -48,3 +48,7 @@ Desktop.ini
 *.tmp
 tmp/
 temp/
+
+# Local XOVI download (do not commit)
+xovi*.tar.gz
+

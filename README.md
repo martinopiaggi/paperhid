@@ -22,6 +22,8 @@ Pair a new device or change advanced options only when you need to; normal use d
 
 Requires a Paper Pro with Developer Mode, the tablet root password, and USB (Wi‑Fi on the tablet if you want mouse / Entware bootstrap).
 
+Root password is under **Settings → Help → Copyrights and licenses** (or your Developer Mode docs).
+
 ```bash
 git clone https://github.com/martinopiaggi/paperhid.git
 cd paperhid
@@ -30,40 +32,39 @@ pip install -r requirements.txt
 
 ```powershell
 # Windows
-$env:PAPERHID_PASSWORD = "your-root-password"
+$env:PAPERHID_PASSWORD = "your-root-ssh-password"
 ```
 
 ```bash
 # macOS / Linux
-export PAPERHID_PASSWORD='your-root-password'
+export PAPERHID_PASSWORD='your-root-ssh-password'
 ```
 
 ```bash
 python cli.py detect
+# install --all also bootstraps tablet Python if missing (Wi-Fi, ~2–5 min)
 python cli.py install --all
+
+# Put the keyboard/mouse in pairing mode, then:
 python cli.py scan
-python cli.py pair --name YourKeyboard
-python cli.py pair --name YourMouse
+python cli.py pair --name "YourKeyboardName"
+python cli.py pair --name "YourMouseName"
 python cli.py status
 ```
 
-Install the tablet services once, pair your devices, then unplug. **Keyboard and mouse can stay paired together** — pairing a mouse no longer removes or overwrites the keyboard (and vice versa). The keyboard reconnect service only tracks the keyboard MAC; the pointer daemon uses any connected mouse/touchpad HID.
+Install once, pair, then unplug. **Keyboard and mouse can stay paired together** — pairing a mouse does not remove the keyboard (and vice versa).
 
 - **`--all`**: keyboard BT service, then mouse daemon.
-- Missing tablet Python: install **auto-bootstraps Entware + python3** (tablet internet, a few minutes, ~80 MB free on `/home`).
 - Keyboard-only: `python cli.py install --keyboard`. Mouse later: `python cli.py install --pointer`.
+- Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`. Legacy env aliases still work.
 
-Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`. Legacy env aliases still work.
-
-## Commands
+## Useful commands
 
 ```bash
-python cli.py status
-python cli.py scan
-python cli.py pair --name YourDevice
 python cli.py set-layout --layout it          # us, us_intl, uk, de, fr, it, es, …
-python cli.py settings-ui                     # Settings → Help (first-time or re-enable; 3.28.0.164 + XOVI)
-python cli.py pointer enable-cursor           # optional visual cursor
+python cli.py settings-ui                     # Settings → Help panel (needs XOVI)
+python cli.py pointer enable-cursor           # optional on-screen crosshair (needs XOVI)
+python cli.py pointer stock-ui                # remove cursor overlay only
 python cli.py pointer test-tap
 python cli.py uninstall --all
 ```
@@ -110,6 +111,7 @@ Stock XOVI leaves some extensions under `inactive-extensions/`. PaperHid needs t
 USB to the tablet, Developer Mode on, root password ready. From the folder that contains the downloaded archive (e.g. this repo):
 
 ```powershell
+# Tablet IP is usually 10.11.99.1 over USB (change if needed).
 # 1) Download the Paper Pro (aarch64) release asset from:
 #    https://github.com/asivery/rm-xovi-extensions/releases/latest
 #    Pick the file named like xovi-aarch64.tar.gz (browser download is fine).
