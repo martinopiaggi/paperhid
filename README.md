@@ -12,11 +12,11 @@ PaperHid installs small services **on the tablet**. The host CLI is only a setup
 
 From then on the tablet owns Bluetooth:
 
-* **Keyboard** — HID layouts with automatic reconnect after sleep and BT dropouts
-* **Mouse / touchpad** — pointer motion and multitouch clicks via `paperpointerd`
-* **Optional cursor** and **Settings → Help** panel (firmware **3.28.0.164** + XOVI) for status, BT controls, and layout switches without a computer
+* **Bluetooth keyboard** : keyboard layouts with automatic reconnect after sleep and BT dropouts
+* **Optional mouse / touchpad** : pointer motion and clicks ([XOVI](https://github.com/asivery/xovi) requirement)
+* **Optional Settings -> Help** panel on device for status, BT controls, and keyboard layout switches without a computer ([XOVI](https://github.com/asivery/xovi) requirement) 
 
-Pair a new device or change advanced options only when you need to; normal use does not require the host.
+Pair a new device with host otherwise normal use does not require a device apart the rmpp.
 
 ## Quick start
 
@@ -44,129 +44,72 @@ export PAPERHID_PASSWORD='your-root-ssh-password'
 python cli.py detect
 # install --all also bootstraps tablet Python if missing (Wi-Fi, ~2–5 min)
 python cli.py install --all
+```
 
+- **`--all`**: keyboard BT service, then mouse daemon.
+- Keyboard-only: `python cli.py install --keyboard`. Mouse later: `python cli.py install --pointer`.
+- Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`.
+
+```bash
 # Put the keyboard/mouse in pairing mode, then:
 python cli.py scan
 python cli.py pair --name "YourKeyboardName"
 python cli.py pair --name "YourMouseName"
 python cli.py status
+python cli.py set-layout --layout it          # us, uk, de, fr, it, es, us_intl supports international accents (' + e -> é )
 ```
 
-Install once, pair, then unplug. **Keyboard and mouse can stay paired together** — pairing a mouse does not remove the keyboard (and vice versa).
-
-- **`--all`**: keyboard BT service, then mouse daemon.
-- Keyboard-only: `python cli.py install --keyboard`. Mouse later: `python cli.py install --pointer`.
-- Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`. Legacy env aliases still work.
-
-## Useful commands
+Install once, pair, then unplug. **Keyboard and mouse can stay paired together** : pairing a mouse does not remove the keyboard (and vice versa).
 
 ```bash
-python cli.py set-layout --layout it          # us, us_intl, uk, de, fr, it, es, …
-python cli.py settings-ui                     # Settings → Help panel (needs XOVI)
-python cli.py pointer enable-cursor           # optional on-screen crosshair (needs XOVI)
-python cli.py pointer stock-ui                # remove cursor overlay only
-python cli.py pointer test-tap
 python cli.py uninstall --all
 ```
 
-| Task | How |
-|------|-----|
-| Pair another keyboard / mouse | Host: `scan` then `pair` |
-| Status, BT restart, reconnect | Tablet: **Settings → Help** (after `settings-ui`) |
-| Layout (US, **US Intl**, UK, DE, FR, IT, ES, …) | **Settings → Help**, or host `set-layout` |
-| US International accents (`'` then `e` → é) | **US Intl**, or `set-layout --layout us_intl` |
-| Cursor overlay | `pointer enable-cursor` / `stock-ui` — [docs/cursor.md](docs/cursor.md) |
-
-On-device paths such as `~/.paperwriter` and `paperpointer.service` are intentional runtime locations; the product name is PaperHid.
-
 ## Optional cursor & Settings UI
 
-Firmware **3.28.0.164** + [XOVI](https://github.com/asivery/xovi) — see [docs/cursor.md](docs/cursor.md). **Save work first** (xochitl restarts). **Not required** for keyboard or click-to-touch mouse.
+**Not required** for keyboard or click-to-touch mouse is it possible to 
 
-### XOVI (optional dependency)
+Requirements: firmware **3.28.0.164** + [XOVI](https://github.com/asivery/xovi) is a third-party extension framework for reMarkable tablets. 
 
-[XOVI](https://github.com/asivery/xovi) is a third-party extension framework for reMarkable tablets. PaperHid uses it only for the on-screen cursor and the **Settings → Help** panel. Keyboard and mouse install via `cli.py install` do **not** install or need XOVI.
-
-| | |
-|--|--|
-| Path on tablet | `/home/root/xovi` |
-| Install / extensions | [asivery/rm-xovi-extensions](https://github.com/asivery/rm-xovi-extensions) (Paper Pro: **aarch64** release) |
-| After install | `xovi/start` over SSH (XOVI is tethered; reboot returns to stock UI until started again) |
-| Factory reset | Wipes `/home` — reinstall XOVI if you want cursor / Help again |
-
-**Paper Pro needs the `aarch64` archive** (not arm32). GitHub names the file `xovi-aarch64.tar.gz`; you can keep that name or rename it to `xovi.tar.gz` — either works as long as `scp` and `tar` use the same path.
-
-**Tablet paths are Linux paths** — always use `/home/root`, never `C:\home\root`.
-
-Stock XOVI leaves some extensions under `inactive-extensions/`. PaperHid needs these **active** (in `extensions.d/`):
-
-- `qt-resource-rebuilder.so` (usually already active)
-- `xovi-message-broker.so`
-- `qt-command-executor.so`
-
-`python cli.py settings-ui` / `enable-cursor` will activate the last two if they are only under `inactive-extensions/`.
-
-#### Install XOVI on Windows (PowerShell)
-
-USB to the tablet, Developer Mode on, root password ready. From the folder that contains the downloaded archive (e.g. this repo):
-
-```powershell
-# Tablet IP is usually 10.11.99.1 over USB (change if needed).
-# 1) Download the Paper Pro (aarch64) release asset from:
-#    https://github.com/asivery/rm-xovi-extensions/releases/latest
-#    Pick the file named like xovi-aarch64.tar.gz (browser download is fine).
-#    Or in PowerShell (do not use wget --no-check-certificate; wget is not GNU wget):
-Invoke-WebRequest -Uri "https://github.com/asivery/rm-xovi-extensions/releases/latest/download/xovi-aarch64.tar.gz" -OutFile "xovi-aarch64.tar.gz"
-
-# 2) Copy onto the tablet (use the real local filename)
-scp xovi-aarch64.tar.gz root@10.11.99.1:/tmp/xovi.tar.gz
-
-# 3) Extract on the tablet — path must be /home/root (Linux), NOT C:\home\root
-ssh root@10.11.99.1 "tar -xzvf /tmp/xovi.tar.gz -C /home/root"
-
-# 4) Activate PaperHid extensions and start XOVI (restarts the tablet UI — save work first)
-ssh root@10.11.99.1 "cp -a /home/root/xovi/inactive-extensions/xovi-message-broker.so /home/root/xovi/extensions.d/ ; cp -a /home/root/xovi/inactive-extensions/qt-command-executor.so /home/root/xovi/extensions.d/ ; /home/root/xovi/start"
-```
-
-If `scp`/`ssh` fail with **REMOTE HOST IDENTIFICATION HAS CHANGED**, the tablet was re-flashed or reinstalled. Remove the old key, then retry:
-
-```powershell
-ssh-keygen -R 10.11.99.1
-```
-
-If OpenSSH is missing, install **OpenSSH Client** (Windows Optional Features) or use WSL and run the bash steps below.
-
-#### Install XOVI on macOS / Linux
+Follow instructions to install KOVI from the official repository, otherwise here a brief steps:
 
 ```bash
-# Download aarch64 asset from the latest release, then:
+# 1) Download aarch64 asset from the latest release, then:
+wget
+# 2) Copy onto the tablet 
 scp xovi-aarch64.tar.gz root@10.11.99.1:/tmp/xovi.tar.gz
+# 3)
 ssh root@10.11.99.1 'tar -xzvf /tmp/xovi.tar.gz -C /home/root'
+# 4)
 ssh root@10.11.99.1 'cp -a /home/root/xovi/inactive-extensions/xovi-message-broker.so /home/root/xovi/extensions.d/ && cp -a /home/root/xovi/inactive-extensions/qt-command-executor.so /home/root/xovi/extensions.d/ && /home/root/xovi/start'
 ```
 
-Official source: [rm-xovi-extensions install notes](https://github.com/asivery/rm-xovi-extensions#to-install-xovi).  
-Or with [Vellum](https://github.com/asivery/rm-xovi-extensions#with-vellum): `vellum add xovi`. PaperHid’s cursor / Help need `qt-resource-rebuilder`, `qt-command-executor`, and `xovi-message-broker` (see [docs/cursor.md](docs/cursor.md)).
-
-#### Enable PaperHid UI (after XOVI is on the tablet)
-
-From the paperhid repo (with `PAPERHID_PASSWORD` set):
+Or if on windows:
 
 ```powershell
-python cli.py settings-ui                 # Settings → Help (first-time or re-enable; activates broker/executor if needed)
-python cli.py pointer enable-cursor       # optional visual cursor
+# 1) Download the Paper Pro (aarch64) release asset
+Invoke-WebRequest -Uri "https://github.com/asivery/rm-xovi-extensions/releases/latest/download/xovi-aarch64.tar.gz" -OutFile "xovi-aarch64.tar.gz"
+# 2) Copy onto the tablet 
+scp xovi-aarch64.tar.gz root@10.11.99.1:/tmp/xovi.tar.gz
+# 3) Extract on the tablet
+ssh root@10.11.99.1 "tar -xzvf /tmp/xovi.tar.gz -C /home/root"
+# 4) Activate PaperHid extensions and start XOVI (restarts the tablet UI)
+ssh root@10.11.99.1 "cp -a /home/root/xovi/inactive-extensions/xovi-message-broker.so /home/root/xovi/extensions.d/ ; cp -a /home/root/xovi/inactive-extensions/qt-command-executor.so /home/root/xovi/extensions.d/ ; /home/root/xovi/start"
 ```
 
-`settings-ui` is the normal command both for **first enable** (after XOVI) and for **re-enable** after a freeze, stock reboot, or empty Help. `repair-ui` is the same command (alias).
+### Enable PaperHid UI or cursor (after XOVI is on the tablet)
 
-Common errors:
+```bash
+python cli.py settings-ui                     # Settings → Help panel (needs XOVI)
+python cli.py pointer enable-cursor           # optional on-screen crosshair (needs XOVI)
+python cli.py pointer stock-ui                # remove cursor overlay only
+```
 
-| Message | Meaning |
-|---------|---------|
-| `XOVI is not installed at /home/root/xovi` | Extract failed or wrong `-C` path (use `/home/root`, not `C:\home\root`) |
-| `xovi-message-broker.so is not active` | Extensions still inactive — run step 4 above, or re-run `settings-ui` with a current paperhid (auto-activates) |
-
+`settings-ui` is the normal command both for **first enable** (after XOVI) and for **re-enable** after a freeze, stock reboot, or empty Help. 
 Settings → Help is independent of the cursor: re-enabling the cursor does not remove the panel.
+
+
+## Troubleshooting
 
 **If Help is empty** after a freeze or reboot, connect USB and run:
 
@@ -176,9 +119,6 @@ python cli.py settings-ui
 
 Then open **Settings → Help** once. Details: [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze).
 
-`python cli.py status` prints a `=== settings_ui ===` section; if it needs re-enable, run `settings-ui`.
-
-## Troubleshooting
 
 | Symptom | Fix |
 |--------|-----|
@@ -193,12 +133,6 @@ Then open **Settings → Help** once. Details: [docs/cursor.md](docs/cursor.md#r
 | Keyboard dead after sleep | Press a key; `status`; re-run `install --keyboard` if the unit is gone |
 | Settings → Help has no PaperHid block | `python cli.py settings-ui` then open Help — [docs/cursor.md](docs/cursor.md#recovery-settings--help-missing-or-tablet-froze) |
 | BT keyboard forces landscape | Default off. If you set `osk_suppress=1` in `~/.paperpointer/pointer.conf`, set `0` and restart pointer |
-
-## Tests
-
-```bash
-python -m unittest discover -s tests -v
-```
 
 ## License
 
