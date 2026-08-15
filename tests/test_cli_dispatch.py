@@ -508,6 +508,7 @@ class TestPointerProbeParse(unittest.TestCase):
         save_password=False,
         probe_stderr="",
         probe_code=0,
+        stdout=None,
     ):
         import argparse
         import cli as root_cli
@@ -521,6 +522,7 @@ class TestPointerProbeParse(unittest.TestCase):
             save_password=save_password,
             timeout=15,
         )
+        out = stdout if stdout is not None else io.StringIO()
 
         def fake_run(c, cmd, timeout=20):
             # Pointer unit probe
@@ -564,7 +566,8 @@ class TestPointerProbeParse(unittest.TestCase):
                                     "paperpointer.sshutil.run",
                                     side_effect=fake_run,
                                 ):
-                                    code = root_cli.cmd_status(args)
+                                    with contextlib.redirect_stdout(out):
+                                        code = root_cli.cmd_status(args)
         return code, fake_c, fake_ssh
 
     def test_cmd_status_inactive_exits_nonzero(self):
@@ -644,6 +647,35 @@ class TestPointerProbeParse(unittest.TestCase):
             probe_code=127,
         )
         self.assertEqual(code, 1)
+
+    def test_cmd_status_prints_logo_before_sections(self):
+        probe_stdout = (
+            "HOME_NO\n"
+            "UNIT_ETC_NO\n"
+            "UNIT_USR_NO\n"
+            "ACTIVE:inactive\n"
+            "FAILED:active\n"
+        )
+        buf = io.StringIO()
+        code, _, _ = self._run_cmd_status(
+            probe_stdout,
+            {
+                "service_present": True,
+                "service_active": True,
+                "service_failed": False,
+                "service_installed": True,
+            },
+            stdout=buf,
+        )
+        self.assertEqual(code, 0)
+        text = buf.getvalue()
+        self.assertIn("PaperHid", text)
+        self.assertTrue(
+            "██" in text or "╔═╗" in text or "____" in text,
+            "status should open with the PAPERHID wordmark",
+        )
+        self.assertLess(text.find("PaperHid"), text.find("=== keyboard ==="))
+        self.assertIn("=== pointer ===", text)
 
 
 class TestDelegatedKeyboardCommands(unittest.TestCase):

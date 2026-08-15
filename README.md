@@ -1,5 +1,7 @@
 # PaperHid
 
+![](showcase.gif)
+
 Bluetooth **keyboard** and **mouse / touchpad** for the [reMarkable Paper Pro](https://remarkable.com/).
 
 > Pair once from your computer. After that, the tablet keeps the connection on its own, across sleep, reboots, and Bluetooth glitches. You never need to leave an app running on the host.
@@ -60,7 +62,7 @@ python cli.py install --all
 python cli.py scan
 python cli.py pair --name "YourKeyboardName"
 python cli.py pair --name "YourMouseName"
-python cli.py status
+python cli.py status                          # PAPERHID banner + keyboard/pointer status
 python cli.py set-layout --layout it          # us, uk, de, fr, it, es, us_intl (international accents: ' + e → é)
 ```
 

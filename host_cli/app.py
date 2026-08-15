@@ -17,6 +17,7 @@ from core.status_merge import (
     merge_exit_codes,
 )
 from host_cli import keyboard as kb
+from host_cli.banner import print_banner
 from host_cli.errors import CliError
 from host_cli.session import (
     host_from_args,
@@ -262,6 +263,7 @@ def parse_pointer_probe_output(out: str) -> dict:
 
 def cmd_status(args) -> int:
     """Merged status: labeled sections; optional/residual components exit 0."""
+    print_banner()
     keyboard_lines: list[str] = []
     keyboard = ComponentStatus(
         state="unknown",
