@@ -14,7 +14,7 @@ from shared.constants import (
     SERVICE_VOLATILE_PATH,
     SCRIPT_REMOTE_PATH,
 )
-from shared.transport import Transport
+from shared.transport import SshTransport, Transport
 
 log = logging.getLogger("paperhid.bluetooth")
 
@@ -22,6 +22,8 @@ log = logging.getLogger("paperhid.bluetooth")
 _MAC_COLON = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 _MAC_DASH = re.compile(r"^([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}$")
 _MAC_COMPACT = re.compile(r"^[0-9A-Fa-f]{12}$")
+_USB_SSH_INTERFACES = {"usb0", "usb1", "rndis0", "rndis1"}
+_USB_SSH_ADDRESSES = {"10.11.99.1"}
 
 
 def normalize_mac(mac: str) -> str:
@@ -123,19 +125,61 @@ def disable_nxp_autosleep(t: Transport):
     return ok, text
 
 
+def _ssh_connection_interface(t: Transport) -> str:
+    if not isinstance(t, SshTransport):
+        return ""
+    out, code = "", 1
+    try:
+        out, _, code = t.run(
+            "set -- ${SSH_CONNECTION:-}; "
+            'ADDR=${3:-}; [ -n "$ADDR" ] || exit 0; '
+            "for IFACE in wlan0 usb0 usb1 rndis0 rndis1; do "
+            'ip addr show dev "$IFACE" 2>/dev/null | '
+            'grep -F -q " $ADDR/" && { echo "$IFACE"; exit 0; }; '
+            "done; true",
+            timeout=5,
+        )
+    except Exception as e:
+        log.debug("cannot identify SSH interface: %s", e)
+    if code == 0 and (out or "").strip():
+        return out.strip().splitlines()[-1].split("@", 1)[0].rstrip(":").lower()
+    target = getattr(t.ssh, "_last_ip", "")
+    if isinstance(target, str) and target.strip().lower() in _USB_SSH_ADDRESSES:
+        return "usb0"
+    return ""
+
+
 def _wifi_gate(t: Transport, block: bool):
+    if block and isinstance(t, SshTransport):
+        interface = _ssh_connection_interface(t)
+        if interface not in _USB_SSH_INTERFACES:
+            log.info(
+                "Wi-Fi left enabled because SSH is not on the tablet USB link%s",
+                f" ({interface})" if interface else "",
+            )
+            return False
+
     if block:
-        t.run(
-            "rfkill block wifi 2>/dev/null || true; "
-            "ip link set wlan0 down 2>/dev/null || true; true",
-            timeout=8,
-        )
-    else:
-        t.run(
-            "ip link set wlan0 up 2>/dev/null || true; "
-            "rfkill unblock wifi 2>/dev/null || true; true",
-            timeout=8,
-        )
+        try:
+            t.run(
+                "rfkill block wifi 2>/dev/null || true; "
+                "ip link set wlan0 down 2>/dev/null || true; true",
+                timeout=8,
+            )
+        except Exception:
+            try:
+                _wifi_gate(t, False)
+            except Exception as e:
+                log.error("Wi-Fi recovery failed after gate error: %s", e)
+            raise
+        return True
+
+    t.run(
+        "rfkill unblock wifi 2>/dev/null || true; "
+        "ip link set wlan0 up 2>/dev/null || true; true",
+        timeout=8,
+    )
+    return False
 
 
 def _btlib_init(t: Transport, timeout=30) -> bool:
@@ -430,9 +474,9 @@ def scan_devices(
     try:
         ensure_adapter_ready(t, timeout=min(12, max(8, int(timeout))), gate_wifi=False)
         if gate_wifi:
-            _wifi_gate(t, True)
-            gated = True
-            time.sleep(0.15)
+            gated = _wifi_gate(t, True)
+            if gated:
+                time.sleep(0.15)
 
         _clear_discovery(t)
         _runtime_pm_on(t)

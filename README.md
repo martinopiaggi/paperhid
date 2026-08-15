@@ -33,11 +33,15 @@ pip install -r requirements.txt
 ```powershell
 # Windows
 $env:PAPERHID_PASSWORD = "your-root-ssh-password"
+# optional — only if the tablet is not at the USB default
+$env:PAPERHID_IP = "10.11.99.1"
 ```
 
 ```bash
 # macOS / Linux
 export PAPERHID_PASSWORD='your-root-ssh-password'
+# optional — only if the tablet is not at the USB default
+export PAPERHID_IP='10.11.99.1'
 ```
 
 ```bash
@@ -49,6 +53,7 @@ python cli.py install --all
 - **`--all`**: keyboard BT service, then mouse daemon.
 - Keyboard-only: `python cli.py install --keyboard`. Mouse later: `python cli.py install --pointer`.
 - Password: set **`PAPERHID_PASSWORD`** (recommended), or pass `--password`.
+- Tablet IP: default **`10.11.99.1`** (USB). Override with **`PAPERHID_IP`**, or `--ip` / `--host` (for example Wi‑Fi).
 
 ```bash
 # Put the keyboard/mouse in pairing mode, then:
@@ -69,7 +74,7 @@ python cli.py uninstall --all
 
 **Not required** for keyboard or click-to-touch mouse.
 
-Requirements: firmware **3.28.0.164** and [XOVI](https://github.com/asivery/xovi) (third-party extension framework for reMarkable). Follow the official install instructions, or use the brief steps below.
+Requirement: [XOVI](https://github.com/asivery/xovi) (third-party extension framework for reMarkable). QML compatibility is checked during installation with automatic rollback on startup failure. Follow the official install instructions, or use the brief steps below.
 
 **macOS / Linux:**
 
@@ -112,7 +117,7 @@ Settings → Help is independent of the cursor: re-enabling the cursor does not 
 
 | Symptom | Fix |
 |--------|-----|
-| SSH fails | USB, Developer mode, root password, IP `10.11.99.1` |
+| SSH fails | USB, Developer mode, root password, IP `10.11.99.1` (or set **`PAPERHID_IP`** / `--ip`) |
 | `settings-ui`: no XOVI | Install XOVI (above), then `settings-ui` |
 | Mouse not moving | `status`; re-pair; wake HID after sleep |
 | Keyboard dead after sleep | Key press; `status`; re-run `install --keyboard` if needed |

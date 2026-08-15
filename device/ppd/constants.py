@@ -23,7 +23,7 @@ CURSOR_PIPE = f"{HOME}/cursor.fifo"
 CURSOR_STYLE_PATH = f"{HOME}/cursor_style"
 # Written by the QML overlay (auto) or overridden via pointer.conf.
 UI_ORIENTATION_PATH = f"{HOME}/ui_orientation"
-CURSOR_READY = "paperpointer-qml-3.28.0.164"
+CURSOR_READY = "paperpointer-cursor-ready-v1"
 UINPUT_PATHS = ("/dev/uinput", "/dev/input/uinput")
 VALID_ORIENTATIONS = frozenset({0, 90, 180, 270})
 ORIENTATION_AUTO = "auto"

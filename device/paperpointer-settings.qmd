@@ -1,6 +1,5 @@
-VERSION 3.28.0.164
-
 ; PaperHid controls in Settings > Help. Independent of MainView / cursor FIFO.
+; Version-unrestricted; the installer rolls back if XOVI/xochitl fails.
 ; Every command and argument is fixed at parse time (paperhid-ui allow-list).
 AFFECT /qml/device/view/settings/Help.qml
     IMPORT net.asivery.CommandExecutor 1.0
@@ -465,7 +464,7 @@ AFFECT /qml/device/view/settings/Help.qml
 
                     function onSignalReceived(signal, message) {
                         if (signal === "paperpointer.settings.ping")
-                            return "paperpointer-settings-qml-3.28.0.164";
+                            return "paperhid-settings-ready-v1";
                         return "";
                     }
                 }

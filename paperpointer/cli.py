@@ -32,7 +32,7 @@ DEVICE_DIR = ROOT / "device"
 PPD_DIR = DEVICE_DIR / "ppd"
 CURSOR_RATE_MAX = 40
 CURSOR_STYLES = ("cross", "win95")
-SETTINGS_UI_READY = "paperpointer-settings-qml-3.28.0.164"
+SETTINGS_UI_READY = "paperhid-settings-ready-v1"
 
 # Staged deploy paths — never write live ppd/ before a validated swap.
 DAEMON_LIVE = f"{REMOTE_HOME}/paperpointerd.py"
@@ -632,7 +632,7 @@ echo OK
         print(
             "note: on-screen cursor is separate from mouse clicks.\n"
             "  If the crosshair is missing: python cli.py pointer enable-cursor\n"
-            "  (XOVI; firmware 3.28.0.164; restarts xochitl — save work first)"
+            "  (XOVI; restarts xochitl — save work first)"
         )
     return 0
 
@@ -817,7 +817,7 @@ def cmd_watch(c) -> int:
 
 
 def cmd_enable_cursor(c) -> int:
-    """Install and health-check the version-locked XOVI QML cursor."""
+    """Install and health-check the XOVI QML cursor."""
     put_tree(c, DEVICE_DIR, REMOTE_HOME, preserve_existing={"pointer.conf"})
     out, err, code = run(
         c,

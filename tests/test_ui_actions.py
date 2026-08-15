@@ -51,7 +51,7 @@ class TestUiActionsShipped(unittest.TestCase):
     def test_cursor_qmd_has_no_experimental_settings_panel(self):
         """The independent settings patch must never share the cursor AFFECT."""
         text = CURSOR_QMD.read_text(encoding="utf-8")
-        self.assertIn("VERSION 3.28.0.164", text)
+        self.assertNotRegex(text, r"(?m)^VERSION\s+")
         self.assertIn("AFFECT /qml/device/view/main/MainView.qml", text)
         self.assertIn("paperpointer-cursor", text)
         self.assertIn("win95.png", text)
@@ -62,7 +62,7 @@ class TestUiActionsShipped(unittest.TestCase):
 
     def test_settings_qmd_targets_help_not_main_view(self):
         text = SETTINGS_QMD.read_text(encoding="utf-8")
-        self.assertIn("VERSION 3.28.0.164", text)
+        self.assertNotRegex(text, r"(?m)^VERSION\s+")
         self.assertIn("AFFECT /qml/device/view/settings/Help.qml", text)
         self.assertNotIn("AFFECT /qml/device/view/main/MainView.qml", text)
         self.assertIn('objectName: "paperpointer-settings-root"', text)
@@ -104,6 +104,8 @@ class TestUiActionsShipped(unittest.TestCase):
             "systemctl is-active --quiet paperpointer.service",
             text,
         )
+        self.assertNotIn("SUPPORTED_VERSION", text)
+        self.assertNotIn("settings QML supports", text)
 
     def test_settings_disable_uses_the_same_stable_xochitl_check(self):
         text = CLI.read_text(encoding="utf-8")
@@ -138,6 +140,8 @@ class TestUiActionsShipped(unittest.TestCase):
         self.assertIn("systemctl reset-failed xochitl.service", cursor)
         self.assertIn("start_xovi_retry", cursor)
         self.assertIn("wait_for_stable_xochitl", cursor)
+        self.assertNotIn("SUPPORTED_VERSION", cursor)
+        self.assertNotIn("cursor QML supports", cursor)
 
     def test_stock_ui_preserves_settings_qmd(self):
         text = CLI.read_text(encoding="utf-8")

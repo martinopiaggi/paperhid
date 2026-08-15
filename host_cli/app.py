@@ -409,8 +409,7 @@ def _probe_settings_ui(run, c) -> list[str]:
     else:
         lines.append("state: not_installed")
         lines.append(
-            "detail: optional Settings UI not installed "
-            "(firmware 3.28.0.164 + XOVI required)"
+            "detail: optional Settings UI not installed (XOVI required)"
         )
         lines.append("fix: install XOVI, then python cli.py settings-ui")
     return lines

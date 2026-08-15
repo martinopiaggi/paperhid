@@ -1,9 +1,8 @@
 #!/bin/sh
-# Enable the version-locked QML cursor. XOVI remains deliberately tethered:
+# Enable the QML cursor. XOVI remains deliberately tethered:
 # rebooting returns the tablet to stock, as required by XOVI's safety model.
 set -eu
 
-SUPPORTED_VERSION="3.28.0.164"
 XOVI="/home/root/xovi"
 EXT="$XOVI/extensions.d"
 INACTIVE="$XOVI/inactive-extensions"
@@ -135,8 +134,6 @@ trap 'rollback 130' INT
 trap 'rollback 143' TERM
 
 IMAGE_VERSION=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n 1)
-[ "$IMAGE_VERSION" = "$SUPPORTED_VERSION" ] ||
-    fail 10 "cursor QML supports $SUPPORTED_VERSION; tablet is ${IMAGE_VERSION:-unknown}"
 [ -x "$XOVI/start" ] || fail 11 "XOVI is not installed at $XOVI"
 [ -f "$EXT/qt-resource-rebuilder.so" ] ||
     fail 12 "qt-resource-rebuilder.so is not active"

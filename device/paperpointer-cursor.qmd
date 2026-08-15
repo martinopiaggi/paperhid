@@ -1,6 +1,5 @@
-VERSION 3.28.0.164
-
-; A scene-graph cursor for the exact xochitl build above.
+; A version-unrestricted scene-graph cursor.
+; The installer checks xochitl stability and rolls back on failure.
 ; The cursor itself uses no framebuffer pointer, private Qt call, or hot
 ; swapBuffers patch. The surrounding XOVI resource rebuilder remains tethered.
 ; Skin (cross | win95) is read from a one-line status file written by the daemon.
@@ -82,7 +81,7 @@ AFFECT /qml/device/view/main/MainView.qml
                         if (signal === "paperpointer.ping") {
                             if (paperPointerCursorLayer.streamSeen &&
                                 paperPointerReader.running)
-                                return "paperpointer-qml-3.28.0.164";
+                                return "paperpointer-cursor-ready-v1";
                             return "paperpointer-not-ready";
                         }
                         return "";

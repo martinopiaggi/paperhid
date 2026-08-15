@@ -3,7 +3,6 @@
 # the cursor patch. Any failed canary restores the previous QMD and XOVI state.
 set -eu
 
-SUPPORTED_VERSION="3.28.0.164"
 XOVI="/home/root/xovi"
 EXT="$XOVI/extensions.d"
 INACTIVE="$XOVI/inactive-extensions"
@@ -99,9 +98,6 @@ trap 'rollback 129' HUP
 trap 'rollback 130' INT
 trap 'rollback 143' TERM
 
-IMAGE_VERSION=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n 1)
-[ "$IMAGE_VERSION" = "$SUPPORTED_VERSION" ] ||
-    fail 10 "settings QML supports $SUPPORTED_VERSION; tablet is ${IMAGE_VERSION:-unknown}"
 [ -x "$XOVI/start" ] || fail 11 "XOVI is not installed at $XOVI"
 [ -f "$EXT/qt-resource-rebuilder.so" ] || fail 12 "qt-resource-rebuilder.so is not active"
 # Stock XOVI ships broker/executor under inactive-extensions; activate like enable_cursor.
